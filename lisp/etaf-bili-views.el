@@ -52,24 +52,21 @@
 
 (etaf-define-component etaf-bili--view-header
     (&key mode status-ref on-search on-theme position left top width height)
-  "Render the brand, the current mode, the retained status and the buttons."
+  "Render the mode, the retained status and the header buttons in one row."
   :view
   (flex :position (or position 'static) :left (or left '(px 0)) :top (or top '(lh 0))
         :width (or width 'stretch) :height (or height '(lh 1)) :align-items 'center
-        :gap '((lh 0) (ch 1)) :padding '((lh 0) (ch 2))
+        :gap '((lh 0) (ch 2)) :padding '((lh 0) (ch 2))
         :background-color (etaf-bili-color :panel2)
         :border-bottom (etaf-bili--border (etaf-bili-color :line))
     (etaf-ui-icon :name 'video :set 'svg :size 0.9 :min-width 2
                   :color (etaf-bili-color :accent))
-    (box :height '(lh 1) :font-weight 'bold :color (etaf-bili-color :ink)
-      (text "B 站"))
-    (box :height '(lh 1) :color (etaf-bili-color :dim) (text "·"))
     (box :height '(lh 1) :color (etaf-bili-color :accent)
       (text (expr (etaf-bili--mode-label mode))))
-    (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0)
-         :height '(lh 1) :overflow 'hidden
-      (text :color (etaf-bili-color :muted) :font-size 16
-        (expr (etaf-bili--view-value status-ref))))
+    (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
+    (box :height '(lh 1) :font-size 16 :color (etaf-bili-color :muted)
+         :flex-shrink 1 :min-width '(ch 0) :overflow 'hidden
+      (text (expr (etaf-bili--view-value status-ref))))
     (etaf-button :ref 'bili-search :label "搜索" :variant 'ghost
                  :help-echo "搜索视频 (/)" :on-press on-search)
     (etaf-button :ref 'bili-theme :label "明暗" :variant 'ghost

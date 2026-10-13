@@ -122,6 +122,7 @@ that fit the measured body."
                     0
                   (max 0 (min (- (length items) visible)
                               (- selected (/ visible 2))))))
+         (list-height (list 'lh (+ body-rows 2)))
          (list-width (if details
                          (list 'calc (list '- (list 'px viewport-width)
                                            etaf-bili--detail-width))
@@ -146,7 +147,7 @@ that fit the measured body."
         :on-theme (lambda () (etaf-bili-toggle-theme)))
        (etaf-bili--view-list
         :position 'absolute :left '(px 0) :top '(lh 1)
-        :width list-width :height (list 'lh body-rows)
+        :width list-width :height list-height
         :items (etaf-bili--visible-rows session start visible)
         :selected selected :start start
         :on-press (lambda (position)
@@ -155,12 +156,19 @@ that fit the measured body."
                     (etaf-bili-play)))
        (etaf-bili--view-detail
         :if details :position 'absolute :left detail-left :top '(lh 1)
-        :width etaf-bili--detail-width :height (list 'lh body-rows)
+        :width etaf-bili--detail-width :height list-height
         :row row)
        (etaf-bili--view-footer
         :position 'absolute :left '(px 0) :top (list 'lh (1+ body-rows))
         :width (list 'px viewport-width) :height '(lh 1)
         :hints etaf-bili--hint-line)
+       ;; Under the footer, one more stripe of the same chrome color: the
+       ;; measured viewport can leave a row of slack at the window edge, and
+       ;; this keeps any remainder continuous with the footer instead of
+       ;; showing the frame background.  The root clips it.
+       (box :position 'absolute :left '(px 0) :top (list 'lh (+ 2 body-rows))
+            :width (list 'px viewport-width) :height '(lh 3)
+            :background-color (etaf-bili-color :panel2))
        (etaf-media-viewer
         :open (and playing t)
         :kind 'video
@@ -206,6 +214,48 @@ that fit the measured body."
   (unless etaf-bili--size-hook-installed
     (add-hook 'window-size-change-functions #'etaf-bili--window-size-changed)
     (setq etaf-bili--size-hook-installed t)))
+
+(defun etaf-bili--remap-face ()
+  "Paint this buffer's unpainted cells with the footer color.
+Ebox paints whole character cells; a body that is not a whole number of
+cells keeps a sub-cell remainder at the edges, and those pixels show the
+buffer's default face.  Remapping it to the footer color keeps every edge
+continuous with the chrome."
+  (face-remap-set-base 'default (list :background (etaf-bili-color :panel2))))
+
+(defvar etaf-bili--frame-background nil
+  "Saved (FRAME . BACKGROUND) while a client paints the frame's edges.")
+
+(defun etaf-bili--adopt-frame-background (frame)
+  "Paint FRAME's unpaintable edge cells with the client's chrome color.
+Emacs reserves the last character cell of every line and any partial bottom
+line, and buffer text cannot paint those pixels; they show the frame
+background.  A client that owns the frame therefore adopts the header and
+footer color while it is open.  Both the frame parameter (the window-system
+background) and the default face are set, because face assertions alone do
+not reach the frame's edge pixels.  The previous value is saved once and
+restored on close."
+  (when (and (frame-live-p frame) (display-graphic-p frame))
+    (unless etaf-bili--frame-background
+      (setq etaf-bili--frame-background
+            (cons frame (ignore-errors (frame-parameter frame 'background)))))
+    (ignore-errors
+      (set-frame-parameter frame 'background (etaf-bili-color :panel2)))
+    (ignore-errors
+      (set-face-attribute 'default frame
+                          :background (etaf-bili-color :panel2)))
+    t))
+
+(defun etaf-bili--restore-frame-background ()
+  "Restore the frame background saved by the client, once."
+  (when-let* ((saved etaf-bili--frame-background))
+    (setq etaf-bili--frame-background nil)
+    (when (and (frame-live-p (car saved)) (cdr saved))
+      (ignore-errors
+        (set-frame-parameter (car saved) 'background (cdr saved)))
+      (ignore-errors
+        (set-face-attribute 'default (car saved) :background (cdr saved))))
+    t))
 
 (defun etaf-bili--start-playback (session source)
   "Open SOURCE (an `etaf-video' plist) in SESSION's media viewer."
@@ -257,11 +307,13 @@ selected video in the framework's media viewer."
                     (set-display-table-slot table 'truncation ?\s)
                     table))
       (use-local-map etaf-bili-mode-map))
+    (etaf-bili--remap-face)
     (let ((display-buffer-overriding-action '((display-buffer-same-window))))
       (pop-to-buffer buffer))
     (etaf-mount buffer (etaf-bili--view session))
     (etaf-bili--install-size-hook)
     (etaf-bili--sync-layout session)
+    (etaf-bili--adopt-frame-background (window-frame (get-buffer-window buffer t)))
     (etaf-bili-load-popular session)
     buffer))
 
@@ -269,6 +321,7 @@ selected video in the framework's media viewer."
 (defun etaf-bili-close ()
   "Close the Bilibili client and kill its buffer."
   (interactive)
+  (etaf-bili--restore-frame-background)
   (let ((buffer (current-buffer)))
     (when etaf-bili--session
       (setq-local etaf-bili--session nil))
@@ -325,6 +378,11 @@ selected video in the framework's media viewer."
     (setq etaf-bili-theme-mode next)
     (etaf-set-value (etaf-bili--session-theme-ref session)
                     (etaf-bili-theme-defaults next))
+    (etaf-bili--remap-face)
+    (when-let* ((buffer (etaf-bili--session-buffer session))
+                (window (and (buffer-live-p buffer)
+                             (get-buffer-window buffer t))))
+      (etaf-bili--adopt-frame-background (window-frame window)))
     t))
 
 (provide 'etaf-bili-app)
