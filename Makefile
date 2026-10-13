@@ -1,0 +1,46 @@
+.DEFAULT_GOAL := check
+.NOTPARALLEL:
+EMACS ?= emacs
+
+# Providers live beside the application (standalone) or two levels up (workspace).
+PROVIDER_ROOT := $(if $(wildcard ../etaf/etaf.el),..,$(if $(wildcard ../../etaf/etaf.el),../..,))
+
+LOAD_PATH = -L . -L lisp -L tests -L $(PROVIDER_ROOT)/etaf -L $(PROVIDER_ROOT)/etaf-ui \
+            -L $(PROVIDER_ROOT)/ebox -L $(PROVIDER_ROOT)/ecss
+
+SOURCES = lisp/etaf-bili-theme.el lisp/etaf-bili-service.el lisp/etaf-bili-model.el \
+          lisp/etaf-bili-views.el lisp/etaf-bili-app.el
+SOURCES += etaf-bili.el
+
+.PHONY: compile load check clean structure-check setup-hooks acceptance api-check test
+
+compile:
+	rm -f *.elc lisp/*.elc tests/*.elc
+	$(EMACS) -Q --batch $(LOAD_PATH) \
+		--eval '(setq load-prefer-newer t byte-compile-error-on-warn t)' \
+		--eval '(unless (file-exists-p "$(PROVIDER_ROOT)/etaf/etaf.el") (error "找不到 ETAF 检出（../etaf 或 ../../etaf）"))' \
+		--eval '(dolist (file (list $(foreach file,$(SOURCES),"$(file)"))) (unless (byte-compile-file file) (kill-emacs 1)))'
+
+load: compile
+	$(EMACS) -Q --batch $(LOAD_PATH) \
+		--eval '(require (quote etaf-bili))' \
+		--eval '(princ "etaf-bili load OK\n")'
+
+check: structure-check compile acceptance api-check
+
+structure-check:
+	python3 scripts/check-repository.py
+
+setup-hooks:
+	git config --local core.hooksPath .githooks
+
+acceptance:
+	python3 scripts/run-acceptance.py --emacs "$(EMACS)"
+
+api-check:
+	$(EMACS) -Q --batch -L . $(LOAD_PATH) --eval '(setq load-prefer-newer t)' -l scripts/check-api.el
+
+clean:
+	rm -f *.elc lisp/*.elc tests/*.elc
+
+test: acceptance
