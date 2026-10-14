@@ -96,6 +96,7 @@ Components use the same colors as the client's own Views."
      :ui-warning-fg warn :ui-warning-bg warn-bg :ui-warning-border warn-border
      :ui-info-fg info :ui-info-bg info-bg :ui-info-border info-border
      :ui-panel-fg ink :ui-panel-bg surface :ui-panel-border line
+     :ui-search-bg panel2 :ui-search-fg ink
      :ui-divider-bg line :ui-progress-track panel3
      :ui-range-track panel3 :ui-range-fill accent
      :ui-table-border line :ui-table-selected-fg accent

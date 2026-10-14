@@ -1,186 +1,174 @@
-;;; etaf-bili-model.el --- Session data and actions -*- lexical-binding: t; -*-
+;;; -*- lexical-binding: t; -*-
+;;; etaf-bili-model.el --- Library state and asynchronous actions
 
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
-;; One session's data and the actions that change it: the current mode
-;; (popular, ranking or search), the loaded rows, the selected row, the status
-;; line and the in-flight request bookkeeping.  The module owns no buffer and
-;; no timer, so every action is testable headless; the application layer
-;; listens to the refs and mounts the View.
-;;
-;; Network replies carry a request token: a reply whose token no longer
-;; matches the session's latest request is dropped, so typing a second search
-;; while the first is in flight cannot overwrite the newer results.
+;; The session owns the library, selection, query and asynchronous request
+;; identities.  UI resources are attached by the application, not by views.
 
 ;;; Code:
-
 (require 'cl-lib)
 (require 'etaf)
 (require 'etaf-bili-theme)
 (require 'etaf-bili-service)
 
-(defgroup etaf-bili nil
-  "Bilibili client built with ETAF and Ebox."
-  :group 'applications)
-
 (cl-defstruct (etaf-bili--session (:constructor etaf-bili--session--make))
-  "One Bilibili application session.
-CLIENT is the backend client; MODE, KEYWORD, ITEMS, SELECTED, STATUS and
-LOADING describe what the list shows; PLAYBACK is the open media viewer's
-source or nil; REQUEST is the token of the latest in-flight request.  The
-`-ref' slots are the reactive sources the View reads."
+  "Library state and application-owned resources."
   client buffer mode keyword items selected status loading request playback
   mode-ref status-ref items-ref selected-ref loading-ref playback-ref
-  theme-ref layout-ref)
+  theme-ref layout-ref query-ref error-ref play-loading-ref
+  details-ref visible-row-ref disposed (play-request 0) on-change
+  (covers (make-hash-table :test #'equal)) cover-queue (cover-active 0)
+  processes)
 
 (cl-defun etaf-bili-session-create (&key client)
-  "Create a session with the backend CLIENT.
-CLIENT defaults to `etaf-bili-client-factory' when bound, otherwise the
-default curl client.  The session starts empty on the popular feed; call
-`etaf-bili-load-popular' (or another load action) to fill it."
-  (let ((client (or client
-                    (if (and (boundp 'etaf-bili-client-factory)
-                             etaf-bili-client-factory)
-                        (funcall etaf-bili-client-factory)
-                      (etaf-bili-make-client)))))
-    (etaf-bili--session--make
-     :client client
-     :mode 'popular
-     :keyword nil
-     :items nil
-     :selected 0
-     :status "就绪"
-     :loading nil
-     :request 0
-     :playback nil
-     :mode-ref (etaf-ref 'popular)
-     :status-ref (etaf-ref "就绪")
-     :items-ref (etaf-ref nil)
-     :selected-ref (etaf-ref 0)
-     :loading-ref (etaf-ref nil)
-     :playback-ref (etaf-ref nil)
-     :theme-ref (etaf-ref (etaf-bili-theme-defaults))
-     :layout-ref (etaf-ref nil :test #'equal))))
+  "Create a headless session with CLIENT, or `etaf-bili-client-factory'.
+Nil factory selects the default curl client.  Creation sends no requests."
+  (etaf-bili--session--make
+   :client (or client (if etaf-bili-client-factory
+                         (funcall etaf-bili-client-factory)
+                       (etaf-bili-make-client)))
+   :mode 'popular :selected 0 :status "就绪" :request 0
+   :mode-ref (etaf-ref 'popular) :status-ref (etaf-ref "就绪")
+   :items-ref (etaf-ref nil) :selected-ref (etaf-ref 0)
+   :loading-ref (etaf-ref nil) :playback-ref (etaf-ref nil)
+   :theme-ref (etaf-ref (etaf-bili-theme-defaults))
+   :layout-ref (etaf-ref nil :test #'equal) :query-ref (etaf-ref "")
+   :error-ref (etaf-ref nil) :play-loading-ref (etaf-ref nil) :details-ref (etaf-ref nil)
+   :visible-row-ref (etaf-ref 0)))
 
-(defun etaf-bili--status (session status)
-  "Set SESSION's status line to STATUS."
-  (setf (etaf-bili--session-status session) status)
-  (etaf-set-value (etaf-bili--session-status-ref session) status))
+(defun etaf-bili--status (session text)
+  "Set SESSION's displayed status to TEXT."
+  (setf (etaf-bili--session-status session) text)
+  (etaf-set-value (etaf-bili--session-status-ref session) text))
 
-(defun etaf-bili--items (session items)
-  "Replace SESSION's rows with ITEMS and select the first one."
-  (setf (etaf-bili--session-items session) items
-        (etaf-bili--session-selected session) 0)
-  (etaf-batch
-    (etaf-set-value (etaf-bili--session-items-ref session) items)
-    (etaf-set-value (etaf-bili--session-selected-ref session) 0)))
-
-(defun etaf-bili--loading (session loading)
-  "Set SESSION's loading flag to LOADING."
-  (setf (etaf-bili--session-loading session) (and loading t))
-  (etaf-set-value (etaf-bili--session-loading-ref session) (and loading t)))
+(defun etaf-bili--notify (session &optional reset)
+  "Notify SESSION's application; RESET requests the new library's beginning."
+  (when (etaf-bili--session-on-change session)
+    (funcall (etaf-bili--session-on-change session) reset)))
 
 (defun etaf-bili--request (session request label)
-  "Perform REQUEST for SESSION and show LABEL while it runs.
-The reply replaces the rows when its token is still the latest; otherwise
-it is dropped."
-  (let ((token (cl-incf (etaf-bili--session-request session))))
-    (etaf-bili--loading session t)
-    (etaf-bili--status session (format "%s · 加载中…" label))
-    (etaf-bili-client-call
-     (etaf-bili--session-client session) request
-     (lambda (reply)
-       (when (= token (etaf-bili--session-request session))
-         (etaf-bili--loading session nil)
-         (if-let* ((items (plist-get reply :ok)))
-             (progn
-               (etaf-bili--items session items)
-               (etaf-bili--status session (format "%s · %d 条" label (length items))))
-           (etaf-bili--status session
-                              (format "%s · %s"
-                                      label
-                                      (or (plist-get reply :error) "请求失败")))))))))
+  "Replace SESSION's library with REQUEST, rejecting stale responses."
+  (unless (etaf-bili--session-disposed session)
+    (let ((token (cl-incf (etaf-bili--session-request session))))
+      (cl-incf (etaf-bili--session-play-request session))
+      (setf (etaf-bili--session-loading session) t)
+      (etaf-batch
+        (etaf-set-value (etaf-bili--session-loading-ref session) t)
+        (etaf-set-value (etaf-bili--session-error-ref session) nil)
+        (etaf-set-value (etaf-bili--session-play-loading-ref session) nil)
+        (etaf-bili--status session (format "%s · 加载中…" label)))
+      (etaf-bili-client-call
+       (etaf-bili--session-client session) request
+       (lambda (reply)
+         (when (and (not (etaf-bili--session-disposed session))
+                    (= token (etaf-bili--session-request session)))
+           (setf (etaf-bili--session-loading session) nil)
+           (etaf-batch
+             (etaf-set-value (etaf-bili--session-loading-ref session) nil)
+             (if (plist-member reply :ok)
+                 (let ((items (cl-delete-duplicates
+                               (copy-sequence (plist-get reply :ok))
+                               :key (lambda (row) (plist-get row :bvid))
+                               :test #'equal :from-end t)))
+                   (setf (etaf-bili--session-items session) items
+                         (etaf-bili--session-selected session) 0)
+                   ;; Cover refs are prepared before publishing new cards.
+                   (etaf-bili--notify session t)
+                   (etaf-set-value (etaf-bili--session-items-ref session) items)
+                   (etaf-set-value (etaf-bili--session-selected-ref session) 0)
+                   (etaf-bili--status session (format "%s · %d 条" label (length items))))
+               (let ((error (or (plist-get reply :error) "请求失败，请重试")))
+                 (etaf-set-value (etaf-bili--session-error-ref session) error)
+                 (etaf-bili--status session (format "%s · %s" label error)))))))))))
 
 (defun etaf-bili-load-popular (session)
   "Load the popular feed into SESSION."
-  (setf (etaf-bili--session-mode session) 'popular
-        (etaf-bili--session-keyword session) nil)
-  (etaf-set-value (etaf-bili--session-mode-ref session) 'popular)
-  (etaf-bili--request session (list :op :popular) "热门"))
+  (etaf-batch
+    (setf (etaf-bili--session-mode session) 'popular
+          (etaf-bili--session-keyword session) nil)
+    (etaf-set-value (etaf-bili--session-mode-ref session) 'popular)
+    (etaf-bili--request session '(:op :popular) "热门")))
 
 (defun etaf-bili-load-ranking (session)
   "Load the all-category ranking into SESSION."
-  (setf (etaf-bili--session-mode session) 'ranking
-        (etaf-bili--session-keyword session) nil)
-  (etaf-set-value (etaf-bili--session-mode-ref session) 'ranking)
-  (etaf-bili--request session (list :op :ranking) "排行榜"))
+  (etaf-batch
+    (setf (etaf-bili--session-mode session) 'ranking
+          (etaf-bili--session-keyword session) nil)
+    (etaf-set-value (etaf-bili--session-mode-ref session) 'ranking)
+    (etaf-bili--request session '(:op :ranking) "排行榜")))
 
 (defun etaf-bili-search (session keyword)
-  "Search videos for KEYWORD and show the results in SESSION."
+  "Search videos for KEYWORD in SESSION; ignore whitespace-only queries."
   (unless (string-empty-p (string-trim keyword))
-    (setf (etaf-bili--session-mode session) 'search
-          (etaf-bili--session-keyword session) keyword)
-    (etaf-set-value (etaf-bili--session-mode-ref session) 'search)
-    (etaf-bili--request session (list :op :search :keyword keyword)
-                        (format "搜索 %s" keyword))))
+    (etaf-batch
+      (setf (etaf-bili--session-mode session) 'search
+            (etaf-bili--session-keyword session) keyword)
+      (etaf-set-value (etaf-bili--session-query-ref session) keyword)
+      (etaf-set-value (etaf-bili--session-mode-ref session) 'search)
+      (etaf-bili--request session (list :op :search :keyword keyword)
+                          (format "搜索 %s" keyword)))))
 
 (defun etaf-bili-session-state (session)
-  "Return SESSION's public state as a detached plist.
-Keys are `:mode', `:keyword', `:status', `:loading', `:items', `:selected'
-and `:playback'.  It reads the session without changing it."
-  (list :mode (etaf-bili--session-mode session)
-        :keyword (etaf-bili--session-keyword session)
-        :status (etaf-bili--session-status session)
-        :loading (and (etaf-bili--session-loading session) t)
-        :items (etaf-bili--session-items session)
-        :selected (etaf-bili--session-selected session)
-        :playback (etaf-bili--session-playback session)))
+  "Return a detached snapshot of SESSION.
+Keys are :mode, :keyword, :status, :loading, :items, :selected, :playback,
+:error and :play-loading.  Empty successful results have nil :error."
+  (copy-tree
+   (list :mode (etaf-bili--session-mode session)
+         :keyword (etaf-bili--session-keyword session)
+         :status (etaf-bili--session-status session)
+         :loading (and (etaf-bili--session-loading session) t)
+         :items (etaf-bili--session-items session)
+         :selected (etaf-bili--session-selected session)
+         :playback (etaf-bili--session-playback session)
+         :error (etaf-value (etaf-bili--session-error-ref session))
+         :play-loading (etaf-value (etaf-bili--session-play-loading-ref session)))))
 
 (defun etaf-bili-reload (session)
-  "Reload SESSION's current view (popular, ranking or the last search)."
+  "Reload SESSION's current feed or search."
   (pcase (etaf-bili--session-mode session)
     ('ranking (etaf-bili-load-ranking session))
     ('search (etaf-bili-search session (or (etaf-bili--session-keyword session) "")))
     (_ (etaf-bili-load-popular session))))
 
 (defun etaf-bili-move (session delta)
-  "Move SESSION's selection by DELTA rows, clamped to the list."
-  (let* ((items (etaf-bili--session-items session))
-         (count (length items))
-         (selected (etaf-bili--session-selected session)))
+  "Move SESSION's selection DELTA places, clamping at the endpoints."
+  (let ((count (length (etaf-bili--session-items session))))
     (when (> count 0)
-      (let ((next (max 0 (min (1- count) (+ selected delta)))))
-        (unless (= next selected)
-          (setf (etaf-bili--session-selected session) next)
-          (etaf-set-value (etaf-bili--session-selected-ref session) next))))))
+      (let ((next (max 0 (min (1- count) (+ (etaf-bili--session-selected session) delta)))))
+        (setf (etaf-bili--session-selected session) next)
+        (etaf-set-value (etaf-bili--session-selected-ref session) next)
+        (etaf-bili--notify session)))))
 
 (defun etaf-bili-selected-row (session)
-  "Return SESSION's selected row plist, or nil when the list is empty."
-  (nth (etaf-bili--session-selected session)
-       (etaf-bili--session-items session)))
+  "Return SESSION's selected video or nil."
+  (nth (etaf-bili--session-selected session) (etaf-bili--session-items session)))
 
 (defun etaf-bili-play-selected (session on-ready)
-  "Resolve the selected video's stream and call ON-READY with the source.
-ON-READY receives one plist: an `etaf-video' source (`:url' plus the CDN
-`:headers') with `:title', `:bvid' and `:duration'.  Failures only change
-SESSION's status line."
+  "Resolve SESSION's selected stream and call ON-READY with its source.
+Only the latest play request may complete.  Failure keeps the library and
+reports :error; a closed session cannot reopen playback."
   (when-let* ((row (etaf-bili-selected-row session)))
-    (etaf-bili--status session
-                       (format "正在解析播放地址：%s" (plist-get row :title)))
-    (etaf-bili-client-call
-     (etaf-bili--session-client session)
-     (list :op :play :bvid (plist-get row :bvid))
-     (lambda (reply)
-       (if-let* ((source (plist-get reply :ok)))
-           (progn
-             (etaf-bili--status session
-                                (format "播放：%s" (or (plist-get source :title)
-                                                      (plist-get row :title))))
-             (funcall on-ready source))
-         (etaf-bili--status session
-                            (format "播放失败：%s"
-                                    (or (plist-get reply :error) "未知错误"))))))))
+    (let ((token (cl-incf (etaf-bili--session-play-request session))))
+      (etaf-batch
+        (etaf-set-value (etaf-bili--session-play-loading-ref session) t)
+        (etaf-set-value (etaf-bili--session-error-ref session) nil)
+        (etaf-bili--status session "正在获取播放地址…"))
+      (etaf-bili-client-call
+       (etaf-bili--session-client session) (list :op :play :bvid (plist-get row :bvid))
+       (lambda (reply)
+         (when (and (not (etaf-bili--session-disposed session))
+                    (= token (etaf-bili--session-play-request session)))
+           (etaf-batch
+             (etaf-set-value (etaf-bili--session-play-loading-ref session) nil)
+             (if-let* ((source (plist-get reply :ok)))
+                 (progn
+                   (etaf-bili--status session (format "播放：%s" (or (plist-get source :title)
+                                                                     (plist-get row :title))))
+                   (funcall on-ready source))
+               (let ((error (or (plist-get reply :error) "未知错误")))
+                 (etaf-set-value (etaf-bili--session-error-ref session) error)
+                 (etaf-bili--status session (concat "播放失败：" error)))))))))))
 
 (provide 'etaf-bili-model)
-;;; etaf-bili-model.el ends here

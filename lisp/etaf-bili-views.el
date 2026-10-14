@@ -1,187 +1,174 @@
-;;; etaf-bili-views.el --- Bilibili client presentation -*- lexical-binding: t; -*-
+;;; -*- lexical-binding: t; -*-
+;;; etaf-bili-views.el --- Cover-led library composed from the UI catalog
 
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
-;; Pure projections for the client shell: the header, the video row, the list
-;; pane and the details aside.  Components receive values and callbacks only;
-;; they never read the session, touch storage or start requests.  Colors come
-;; from `etaf-bili-theme' through the four depth steps, and every row keeps
-;; its line budget so the list never grows a pane.
+;; Cards, SearchField, Tabs, Badge, Skeleton, Empty, Alert and Drawer own
+;; their UI semantics.  Application components arrange them in a bounded
+;; cover grid.  Animation belongs to each Component scope and never delays
+;; a request or recreates a player.
 
 ;;; Code:
-
 (require 'etaf)
 (require 'etaf-ui)
 (require 'etaf-bili-theme)
 
-(defconst etaf-bili--detail-width '(ch 34)
-  "Width of the details column.")
-(defconst etaf-bili--detail-min-pixels 1000
-  "Published viewport width from which the details column is shown.")
-
-(defun etaf-bili--view-value (value)
-  "Read a display VALUE or source inside its consuming Host."
-  (if (or (etaf-ref-p value) (etaf-computed-p value)) (etaf-value value) value))
-
-(defun etaf-bili--border (color)
-  "Return a one-pixel solid border in COLOR."
-  (list '(px 1) 'solid color))
-
-(defun etaf-bili--hover-surface ()
-  "Return the shared hover surface."
-  (list :background-color (etaf-bili-color :hover)))
-
 (defun etaf-bili--clock (seconds)
-  "Format SECONDS as `MM:SS' or `H:MM:SS'."
-  (let* ((seconds (max 0 (round (or seconds 0))))
-         (hours (/ seconds 3600))
-         (minutes (/ (% seconds 3600) 60))
-         (rest (% seconds 60)))
-    (if (> hours 0)
-        (format "%d:%02d:%02d" hours minutes rest)
-      (format "%02d:%02d" minutes rest))))
+  "Format SECONDS without losing an hour prefix."
+  (let ((seconds (max 0 (round (or seconds 0)))))
+    (if (>= seconds 3600)
+        (format "%d:%02d:%02d" (/ seconds 3600) (/ (% seconds 3600) 60) (% seconds 60))
+      (format "%02d:%02d" (/ seconds 60) (% seconds 60)))))
 
-(defun etaf-bili--mode-label (mode)
-  "Return the display label for MODE."
-  (pcase mode
-    ('popular "热门")
-    ('ranking "排行榜")
-    ('search "搜索")
-    (_ "浏览")))
+(defun etaf-bili--count (value)
+  "Format numeric view count VALUE compactly; retain already formatted text."
+  (let ((number (if (numberp value) value
+                  (and (stringp value) (string-match-p "\\`[0-9]+\\'" value)
+                       (string-to-number value)))))
+    (cond ((and number (>= number 100000000)) (format "%.1f 亿" (/ number 100000000.0)))
+          ((and number (>= number 10000)) (format "%.1f 万" (/ number 10000.0)))
+          (number (number-to-string number))
+          (t (or value "—")))))
 
-(etaf-define-component etaf-bili--view-header
-    (&key mode status-ref on-search on-theme position left top width height)
-  "Render the mode, the retained status and the header buttons in one row."
+(defun etaf-bili--layout (viewport)
+  "Return the content grid for VIEWPORT (pixel width, rows, cell width/height).
+At least 64 columns and 28 lines are needed.  Smaller windows clip the same
+minimum layout instead of shrinking type or overlapping controls."
+  (let* ((cw (or (nth 2 viewport) 7)) (lh (or (nth 3 viewport) 16))
+         (pixels (max (* 64 cw) (or (nth 0 viewport) (* 100 cw))))
+         (lines (max 28 (or (nth 1 viewport) 36)))
+         (budget (min 180 (- (floor pixels cw) 6)))
+         (across (min 4 (max 1 (/ (+ budget 3) 42))))
+         (body (- lines 11))
+         (target-rows (if (>= body 29) 2 1))
+         (row-budget (1- (floor (1+ body) target-rows)))
+         (card-width (min (floor (- budget (* 3 (1- across))) across)
+                          (+ 4 (floor (/ (* (max 5 (- row-budget 6)) lh 16.0) (* cw 9))))))
+         (columns (+ (* across card-width) (* 3 (1- across))))
+         (cover-columns (- card-width 4))
+         (cover-rows (max 5 (ceiling (/ (* cover-columns cw 9.0) (* lh 16)))))
+         (card-height (+ cover-rows 6))
+         (down (max 1 (floor (1+ body) (1+ card-height)))))
+    (list :width pixels :rows lines :columns budget :grid-columns columns :across across
+          :left (max 0 (/ (- pixels (* budget cw)) 2))
+          :card-width card-width :cover-columns cover-columns
+          :cover-rows cover-rows :card-height card-height
+          :capacity (* across down) :body body :cell-width cw :cell-height lh)))
+
+(etaf-define-component etaf-bili--loading-indicator ()
+  "One scoped animation for a pending operation, not a clock per card."
+  :bindings ((frame (etaf-animation-frames '("·" "··" "···" "··") :interval 0.18)))
   :view
-  (flex :position (or position 'static) :left (or left '(px 0)) :top (or top '(lh 0))
-        :width (or width 'stretch) :height (or height '(lh 1)) :align-items 'center
-        :gap '((lh 0) (ch 2)) :padding '((lh 0) (ch 2))
-        :background-color (etaf-bili-color :panel2)
-        :border-bottom (etaf-bili--border (etaf-bili-color :line))
-    (etaf-ui-icon :name 'video :set 'svg :size 0.9 :min-width 2
-                  :color (etaf-bili-color :accent))
-    (box :height '(lh 1) :color (etaf-bili-color :accent)
-      (text (expr (etaf-bili--mode-label mode))))
-    (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
-    (box :height '(lh 1) :font-size 16 :color (etaf-bili-color :muted)
-         :flex-shrink 1 :min-width '(ch 0) :overflow 'hidden
-      (text (expr (etaf-bili--view-value status-ref))))
-    (etaf-button :ref 'bili-search :label "搜索" :variant 'ghost
-                 :help-echo "搜索视频 (/)" :on-press on-search)
-    (etaf-button :ref 'bili-theme :label "明暗" :variant 'ghost
-                 :help-echo "切换明暗主题 (T)" :on-press on-theme)))
+  (box :width '(ch 4) :height '(lh 1) :color (etaf-bili-color :accent)
+    (text :ref 'bili-loading-frame (expr (etaf-value frame)))))
 
-(etaf-define-component etaf-bili--view-row
-    (&key position title author duration views date active on-press)
-  "Render one two-line video row with a stable full-row target."
-  :view
-  (flex :position 'relative :width 'stretch :height '(lh 2)
-        :align-items 'center :gap '((lh 0) (ch 1)) :padding '((lh 0) (ch 1))
-        :role 'button :tab-index 0 :ref (intern (format "bili-row-%d" position))
-        :help-echo (format "播放：%s" title)
-        :on-press on-press
-        :hover-style (unless active (etaf-bili--hover-surface))
-        :background-color (etaf-bili-color (if active :accent-soft :surface))
-    (box :if active :position 'absolute :left '(px 0) :top '(lh 0)
-         :width '(px 2) :height '(lh 2) :background-color (etaf-bili-color :accent))
-    (box :width '(ch 3) :height '(lh 1) :text-align 'center
-         :color (etaf-bili-color (if active :accent :dim))
-      (text (expr (number-to-string (1+ position)))))
-    (flex :flex-direction 'column :height '(lh 2) :min-width '(ch 0)
-          :flex-grow 1 :flex-basis '(ch 0)
-      (box :height '(lh 1) :overflow 'hidden
-           :font-weight (if active 'bold 'normal)
-           :color (etaf-bili-color (if active :accent :ink))
-        (text (expr title)))
-      (flex :height '(lh 1) :align-items 'center :gap '((lh 0) (ch 1))
-            :min-width '(ch 0)
-        (box :height '(lh 1) :overflow 'hidden :font-size 16
-             :color (etaf-bili-color :muted)
-          (text (expr author)))
-        (box :height '(lh 1) :font-size 16 :color (etaf-bili-color :dim)
-          (text "·"))
-        (box :height '(lh 1) :font-size 16 :color (etaf-bili-color :dim)
-          (text (expr (format "%s · %s 播放 · %s"
-                              (etaf-bili--clock duration) views date))))))))
+(etaf-define-component etaf-bili--cover (&key file columns rows cell-width cell-height)
+  "Contain the decoded FILE at its native aspect, never stretch it to cells.
+FILE is a ref holding (:file PATH :size (WIDTH . HEIGHT)); the application
+reads dimensions once, outside rendering.  Insets absorb partial image rows."
+  :render
+  (let* ((source (and file (etaf-value file)))
+         (path (and (consp source) (plist-get source :file)))
+         (size (and path (plist-get source :size)))
+         (ratio (and size (/ (float (car size)) (cdr size))))
+         (image-columns (and ratio (max 1 (min columns (floor (/ (* rows cell-height ratio) cell-width))))))
+         (image-height (and ratio (max 1 (round (/ (* image-columns cell-width) ratio)))))
+         (image-rows (and image-height (ceiling (float image-height) cell-height)))
+         (inset (and image-height (cons 0 (- (* image-rows cell-height) image-height)))))
+    (etaf-view
+     (flex :width (list 'ch columns) :height (list 'lh rows) :overflow 'hidden
+           :align-items 'center :justify-content 'center
+           :background-color (etaf-bili-color :panel2)
+       (image :if path :src path :columns image-columns :rows image-rows :inset inset)
+       (etaf-ui-icon :if (not path) :name 'video :set 'svg :min-width 3
+                     :color (etaf-bili-color :dim))))))
 
-(etaf-define-component etaf-bili--view-list
-    (&key items selected start on-press position left top width height)
-  "Render the visible slice of the video list."
+(etaf-define-component etaf-bili--video-card
+    (&key row index selection cover columns image-rows height cell-width cell-height on-play on-select)
+  "Compose a cover, title, metadata and a play action on a catalog Card."
+  :bindings
+  ((selected (etaf-computed (lambda () (= index (etaf-value selection)))))
+   (wash (etaf-transition (lambda () (if (etaf-value selected) 1.0 0.0))
+                         :duration 0.16 :easing 'ease-out)))
   :view
-  (flex :position (or position 'static) :left (or left '(px 0)) :top (or top '(lh 0))
-        :width (or width 'stretch) :height (or height 'stretch)
-        :flex-direction 'column :overflow 'hidden
-        :background-color (etaf-bili-color :surface)
-    (etaf-bili--view-row :for (entry items) :key (car entry)
-      :position (car entry)
-      :title (plist-get (cdr entry) :title)
-      :author (plist-get (cdr entry) :author)
-      :duration (plist-get (cdr entry) :duration)
-      :views (plist-get (cdr entry) :views)
-      :date (plist-get (cdr entry) :date)
-      :active (= (car entry) selected)
-      :on-press (lambda () (funcall on-press (car entry))))))
+  (etaf-card :width (list 'ch columns) :height (list 'lh height)
+             :padding '((lh 1) (ch 2)) :item-gap '(lh 0)
+             :border '((px 0) none) :overflow 'hidden
+             :ref (intern (format "bili-card-%d" index))
+             :role 'button :tab-index 0
+             :aria-label (plist-get row :title)
+             :aria-selected (etaf-value selected)
+             :on-focus (lambda () (funcall on-select index))
+             :on-press (lambda () (funcall on-play index))
+             :hover-style (unless (etaf-value selected)
+                            (list :background-color (etaf-bili-color :hover)))
+             :background-color
+             (etaf-animation-interpolate
+              (etaf-bili-color :surface) (etaf-bili-color :accent-soft)
+              (* 0.125 (round (* 8 (etaf-value wash)))))
+    (column :width 'stretch :item-gap '(lh 0)
+      (box :position 'relative :height (list 'lh image-rows) :width 'stretch
+        (etaf-bili--cover :file cover :columns (- columns 4) :rows image-rows
+                          :cell-width cell-width :cell-height cell-height)
+        (box :position 'absolute :left '(ch 1) :top (list 'lh (1- image-rows))
+          (etaf-badge :text (etaf-bili--clock (plist-get row :duration)) :variant 'neutral)))
+      (box :height '(lh 2) :width 'stretch :overflow 'hidden
+           :padding-block '(lh 0) :color (etaf-bili-color :ink)
+        (text (expr (plist-get row :title))))
+      (flex :height '(lh 1) :align-items 'center :justify-content 'space-between
+        (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0) :overflow 'hidden
+          (etaf-label :text (plist-get row :author) :variant 'muted))
+        (etaf-label :text (concat (etaf-bili--count (plist-get row :views)) " 播放")
+                    :variant 'muted))
+      (flex :height '(lh 1) :align-items 'center :justify-content 'space-between
+        (etaf-label :text (plist-get row :date) :variant 'muted)
+        (etaf-button :label "播放" :variant 'ghost
+                     :ref (intern (format "bili-play-%d" index))
+                     :aria-selected (etaf-value selected)
+                     :on-press (lambda () (funcall on-play index)))))))
 
-(etaf-define-component etaf-bili--view-fact-rows
-    (&key rows)
-  "Render (LABEL . VALUE) rows with values aligned to the trailing edge."
+(etaf-define-component etaf-bili--skeleton-card (&key columns image-rows height)
+  "Reserve the same geometry as a video card while loading."
   :view
-  (flex :flex-direction 'column :width 'stretch
-    (flex :for (row rows) :key (car row) :height '(lh 1) :align-items 'center
-          :justify-content 'space-between
-      (box :height '(lh 1)
-        (text :color (etaf-bili-color :muted) :font-size 16 (expr (car row))))
-      (box :height '(lh 1) :text-align 'right :overflow 'hidden
-        (text :color (etaf-bili-color :ink) (expr (cdr row)))))))
+  (etaf-card :width (list 'ch columns) :height (list 'lh height)
+             :padding '((lh 1) (ch 2)) :border '((px 0) none) :item-gap '(lh 0)
+    (column :item-gap '(lh 1)
+      (etaf-skeleton :width (list 'ch (- columns 4)) :height (list 'lh image-rows))
+      (etaf-skeleton :width (list 'ch (- columns 7)))
+      (etaf-skeleton :width (list 'ch (/ columns 2))))))
 
-(etaf-define-component etaf-bili--view-detail
-    (&key row position left top width height)
-  "Render the selected video's details, or an empty-state hint."
+(etaf-define-component etaf-bili--header
+    (&key query on-submit on-theme width compact)
+  "A three-row header, with breathing room and a native editable SearchField."
   :view
-  (flex :position (or position 'static) :left (or left '(px 0)) :top (or top '(lh 0))
-        :width (or width etaf-bili--detail-width) :height (or height 'stretch)
-        :flex-direction 'column :overflow 'hidden :padding '((lh 1) (ch 2))
-        :background-color (etaf-bili-color :surface)
-        :border-left (etaf-bili--border (etaf-bili-color :line))
-    (flex :height '(lh 1) :align-items 'center :gap '((lh 0) (ch 1))
-      (etaf-ui-icon :name 'info :set 'svg :size 0.9 :min-width 2
-                    :color (etaf-bili-color :muted))
-      (box :height '(lh 1) :font-weight 'bold :font-size 16
-           :color (etaf-bili-color :muted) (text "视频详情")))
-    (box :height '(lh 1))
-    (etaf-divider)
-    (box :height '(lh 1))
-    (box :if (not row) :height '(lh 2) :color (etaf-bili-color :dim)
-      (text "列表为空\n按 / 搜索视频"))
-    (box :if row :height '(lh 3) :overflow 'hidden :font-weight 'bold
-      (text (expr (or (plist-get row :title) ""))))
-    (box :if row :height '(lh 1) :overflow 'hidden :font-size 16
-         :color (etaf-bili-color :muted)
-      (text (expr (or (plist-get row :author) ""))))
-    (box :if row :height '(lh 1))
-    (etaf-bili--view-fact-rows
-     :if row
-     :rows (list (cons "时长" (etaf-bili--clock (plist-get row :duration)))
-                 (cons "播放" (or (plist-get row :views) ""))
-                 (cons "发布" (or (plist-get row :date) ""))
-                 (cons "BV 号" (or (plist-get row :bvid) ""))))
-    (box :if row :height '(lh 1))
-    (etaf-divider :if row)
-    (box :flex-grow 1 :flex-basis '(lh 0) :min-height '(lh 0))
-    (box :height '(lh 1) :font-size 16 :color (etaf-bili-color :dim)
-      (text "RET 播放 · n 下一条 · p 上一条"))))
+  (flex :width (list 'ch width) :height '(lh 3) :align-items 'center
+        :gap '((lh 0) (ch 3)) :region '(:id search :label "搜索视频" :key "s" :enter bili-search)
+    (row :item-gap '(ch 1) :cross-align 'center
+      (etaf-ui-icon :name 'video :set 'svg :min-width 2 :color (etaf-bili-color :accent))
+      (etaf-label :text "B 站" :variant 'strong))
+    (etaf-search-field :ref 'bili-search :bind query :icon t
+                       :placeholder "搜索视频、UP 主或关键词"
+                       :on-submit on-submit)
+    (etaf-button :ref 'bili-theme :label (if compact "明暗" "切换主题")
+                 :variant 'ghost :on-press on-theme)))
 
-(etaf-define-component etaf-bili--view-footer
-    (&key hints position left top width height)
-  "Render the fixed bottom hint row."
+(etaf-define-component etaf-bili--navigation
+    (&key mode status loading on-mode on-refresh width)
+  "Catalog tabs plus live feedback, spaced independently of the header."
   :view
-  (box :position (or position 'static) :left (or left '(px 0)) :top (or top '(lh 0))
-       :width (or width 'stretch) :height (or height '(lh 1))
-       :text-align 'center :overflow 'hidden :font-size 16
-       :background-color (etaf-bili-color :panel2)
-       :color (etaf-bili-color :dim)
-    (text (expr hints))))
+  (flex :width (list 'ch width) :height '(lh 3) :align-items 'center
+        :gap '((lh 0) (ch 2))
+        :region '(:id navigation :label "频道" :key "n" :enter bili-popular)
+    (etaf-tabs :active mode
+               :items '((:key popular :label "发现热门" :ref bili-popular)
+                        (:key ranking :label "全站排行" :ref bili-ranking)
+                        (:key search :label "搜索结果" :ref bili-results))
+               :on-change on-mode)
+    (box :flex-grow 1 :flex-basis '(ch 0))
+    (etaf-bili--loading-indicator :if (etaf-value loading))
+    (box :width (list 'ch (min 24 (max 8 (- width 50)))) :height '(lh 1) :overflow 'hidden
+      (etaf-label :text (etaf-value status) :variant 'muted))
+    (etaf-button :ref 'bili-refresh :label "刷新" :variant 'ghost :on-press on-refresh)))
 
 (provide 'etaf-bili-views)
-;;; etaf-bili-views.el ends here

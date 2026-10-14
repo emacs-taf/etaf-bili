@@ -1,92 +1,110 @@
 # ETAF Bili manual
 
-## Browsing
+## Discover and search
 
-`etaf-bili-open` creates one buffer named `*Bili*` and loads the popular
-feed.  The list shows each video as two lines: its title, then the author,
-length, view count and publication date.  `j`/`k` (also `n`/`p` or the arrow
-keys) move the selection, and the selected row is highlighted with the accent
-color.  `1` loads the popular feed, `2` the all-category ranking, and `g`
-reloads whichever view is current.  Clicking a row selects and plays it.
+Run `M-x etaf-bili-open`. The popular feed loads asynchronously into a cover
+card gallery. Click the channel tabs or press `1`/`2` for popular videos and
+the ranking. `/` starts editing the rounded search field in the page; text,
+Chinese input, undo and selection use the catalog's native editing session.
+Return submits. Escape keeps the draft without running a search.
 
-When the published viewport is wide enough (from roughly 143 character
-columns), a details column shows the selected video's title, author, length,
-view count, publication date and BV number, plus the key hints for playback.
+Each card shows a proportionally fitted cover, duration, title, creator, view
+count and publication date. Wide windows show more columns; shorter windows
+use a smaller cover area. The main grid has a maximum reading width rather
+than stretching every card across the frame. The minimum usable content area
+is 64 columns by 28 lines. Below it the interface clips deliberately.
 
-`etaf-bili-close` (also `q`) unmounts the ETAF Runtime and kills the buffer.
+The wheel or trackpad scrolls continuously through the loaded results; there
+are no page controls. Arrow keys move through the grid and `n`/`p` move
+sequentially, scrolling the selected card into view when necessary.
+`j`/`k` are sequential shortcuts only under the default direction scheme;
+with ETAF's Vim direction scheme they retain direction semantics.
 
-## Searching
+The details action (`i`) opens a Drawer. Escape closes it and restores focus.
+The metadata does not occupy a permanently empty sidebar. `?` lists the
+actual declared bindings and `M-g` selects the search, channel or video region.
 
-`/` prompts for a keyword in the minibuffer and replaces the list with the
-search results; the status line shows the keyword and the result count.
-Blank input is ignored.  The search endpoint requires WBI signing, which the
-client performs in Lisp: the two server keys come from the nav endpoint
-(cached for the session), parameters are sorted and encoded like
-`encodeURIComponent`, and `w_rid` is the MD5 over the query plus the permuted
-key.  `etaf-bili-wbi-query` exposes the signer for tests and scripts.
+## Loading and motion
 
-Every request carries the session's cookie jar (`buvid3` and friends); the
-client seeds it with one homepage visit per session before the first API
-call.  Requests that the server rejects with an HTML challenge surface as a
-status-line error instead of breaking the interface.
+The first request shows geometry-matched Skeleton cards. A scoped frame
+animation marks pending work; selecting another card animates its accent
+fill for 160 ms. Neither waits before sending a request. Animations belong
+to Component scopes and stop when the component disappears or the app closes.
+Set `etaf-animation-enabled` to nil for reduced motion.
+
+A failed request shows an Alert and retry action; an empty successful search
+shows an Empty component, not the previous results. Late list or playback
+responses cannot replace a newer request. Closing the buffer makes outstanding
+callbacks inert and releases its cover transfers and animation scopes.
+
+Only visible card rows and a small overscan window are mounted and request
+covers, with at most three concurrent transfers. The image CDN download is capped at 2 MiB per file and atomically
+installed under `etaf-bili-state-directory/covers/`. Failed images show a
+placeholder without blocking video playback. Native image dimensions are read
+once outside rendering. Each cover is contained at its original aspect ratio;
+partial image rows use the Image Host's inset instead of distorting the image.
 
 ## Playback
 
-`RET` (`etaf-bili-play`) resolves the selected video through two API steps --
-the metadata endpoint supplies the `cid`, then the play URL endpoint returns
-a progressive MP4 stream -- and opens the framework's `etaf-media-viewer`
-with that stream.  The source plist carries the `Referer` and `User-Agent`
-headers the CDN requires; without them the CDN answers 403.
+Press Return on a card or activate its play button. The service first resolves
+video metadata and then a progressive stream, with the Referer and User-Agent
+headers required by the CDN. The catalog MediaViewer opens in the same buffer.
+Space plays/pauses, arrows seek, `m` toggles sound, `.` cycles speed, and `n`/`p`
+resolve the adjacent video. Escape or `q` closes the viewer, not the library.
 
-Inside the viewer, `SPC` plays or pauses, the transport bar seeks, `-10` and
-`+10` step ten seconds, `n`/`p` (or the side arrows) move to the next or
-previous list entry and play it, `m` toggles sound, `.` cycles the speed, and
-`q` or Escape closes the viewer and returns to the list.  Playback runs in
-the same buffer, so no external player window is involved.
+The server controls availability, quality and URL expiry. This client does not
+implement login, account libraries, comments, danmaku or paid-content access.
+Reopen playback to resolve an expired stream. No permanent stream URL is saved.
 
-A failed lookup (a geo-blocked video, an expired URL, a network problem)
-only writes a readable message to the status line; the list stays usable.
+## Integration
 
-## Scripting
+The root Commentary documents session and client interfaces. A client may be a
+function accepting `(REQUEST CALLBACK)`, returning `(:ok DATA)` or
+`(:error MESSAGE :hint HINT)` through the callback. Tests use that injection
+point without touching the network. A `:cover` request returns a local image
+path; a fake client may return an error to exercise placeholders.
 
-The session-level functions take the session record directly, so scripts and
-tests can drive the client without a buffer:
+Session actions are asynchronous; consume a result in its callback rather
+than assuming a load has completed in the next form:
 
 ```elisp
-(let ((session (etaf-bili-session-create)))      ; uses the curl client
-  (etaf-bili-load-popular session)
-  (etaf-bili-move session 2)
-  (etaf-bili-play-selected session
-                            (lambda (source) (message "%S" source)))
-  (etaf-bili-session-state session))
-;; => (:mode popular :status "播放：…" :items (...) :selected 2 :playback ...)
+(let ((client (etaf-bili-make-client)))
+  (etaf-bili-client-call
+   client '(:op :search :keyword "Emacs 配置")
+   (lambda (reply)
+     (message "%s" (if (plist-member reply :ok)
+                       (format "%d results" (length (plist-get reply :ok)))
+                     (plist-get reply :error))))))
 ```
 
-`etaf-bili-session-state` returns a detached plist; rows carry `:bvid`,
-`:aid`, `:title`, `:author`, `:duration` (seconds), `:views` (a display
-string), `:date` and `:cover`.  `etaf-bili-play-selected` calls its callback
-with the stream source plist (`:url`, `:headers`, `:title`, `:bvid`,
-`:duration`).
+`etaf-bili-session-state` returns detached data for a session. Search signing
+uses the server's WBI keys and URI-component encoding; the session's cookie
+jar is maintained under `etaf-bili-state-directory`. Neither cookies nor
+signed stream URLs belong in a repository or diagnostic transcript.
 
-| Variable | Meaning |
-| --- | --- |
-| `etaf-bili-state-directory` | cookie jar directory, defaults to `~/.emacs.d/etaf-bili/` |
-| `etaf-bili-request-timeout` | seconds before one request is abandoned, default 20 |
-| `etaf-bili-curl-program` | curl executable used for every request |
-| `etaf-bili-theme-mode` | `dark` (default) or `light`; T switches the running client |
-| `etaf-bili-client-factory` | function returning the backend client; bind it to a fake in tests |
+## GUI verification
 
-## Troubleshooting
+Use a dedicated graphical Emacs with the full user configuration. Keep the
+native title bar and foreground focus untouched. After compiling the package,
+load ETAF's maintained verification engine and this app's scenario adapter:
 
-- Search or load fails with a status-line error: check the network and that
-  curl can reach `api.bilibili.com`.  A server-side HTML challenge usually
-  means the request lost its cookies; the next request re-seeds them.
-- Playback fails with an error from the CDN: the play URLs expire after a
-  couple of hours and some videos are region-locked.  Press `RET` again to
-  resolve a fresh URL.
-- No picture: the viewer needs a graphical frame; on a terminal the canvas
-  falls back to a density ramp.  Sound requires ffplay.
-- The details column does not appear: the viewport is narrower than the
-  threshold; make the window wider or hide the playlist column.
-- Rows show fewer than 20 results while the status says more: the list shows
-  the rows that fit the window; the selection scrolls through the rest.
+```elisp
+(load "/path/to/etaf/scripts/emacs-gui-verifier.el")
+(load "/path/to/etaf-bili/scripts/etaf-bili-gui-scenarios.el")
+(etaf-bili-gui-run "/tmp/bili-gui-evidence")
+```
+
+The adapter drives actual catalog targets and native text input, verifies cover
+aspect ratios, drives a wheel event and keyboard reveal, searches and ranks
+real videos, opens and closes details, and
+captures both themes at ordinary, compact, wide and short sizes. Review the
+captures separately from the assertions. Playback and pointer feedback need
+their real-data pass too; batch acceptance does not certify those properties.
+
+The workspace performance driver accepts
+`--scenario-file etaf-apps/etaf-bili/benchmarks/performance-scenarios.el
+--scenario bili.appearance --load-path etaf-apps/etaf-bili` with `--mode batch`
+or `--mode gui --server NAME`. Use `--scenario bili.scroll` for continuous
+scrolling across virtual rows in a hundred-video offline library. Keep sources
+quiet during measurement and use
+three independent sets for a final latency claim.

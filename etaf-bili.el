@@ -44,10 +44,10 @@
 ;; Tear down the runtime and kill the client buffer.
 ;;
 ;; Function: etaf-bili-next ()
-;; Move the selection to the next row; wraps at the end.
+;; Select and focus the next video; clamp at the last item.
 ;;
 ;; Function: etaf-bili-previous ()
-;; Move the selection to the previous row; wraps at the start.
+;; Select and focus the previous video; clamp at the first item.
 ;;
 ;; Function: etaf-bili-play ()
 ;; Resolve the selected video's stream and open it in the media viewer.
@@ -57,7 +57,12 @@
 ;; Empty or whitespace-only keywords are ignored.
 ;;
 ;; Function: etaf-bili-search-prompt ()
-;; Prompt for a keyword in the minibuffer and search for it.
+;; Begin native editing of the in-page SearchField. Return submits the query;
+;; Escape keeps its draft. No minibuffer or additional window is opened.
+;;
+;; Function: etaf-bili-details ()
+;; Open the selected video's metadata in a catalog Drawer. Escape closes it
+;; and restores focus; no permanently empty side column is reserved.
 ;;
 ;; Function: etaf-bili-popular ()
 ;; Load the currently popular videos.
@@ -79,7 +84,7 @@
 ;; Function: etaf-bili-session-state (session)
 ;; Return SESSION's public state as a detached plist.
 ;; Keys are `:mode', `:keyword', `:status', `:loading', `:items', `:selected'
-;; and `:playback'; each `:items' row carries the fields documented on
+;; `:playback', `:error' and `:play-loading'; each `:items' row carries the fields documented on
 ;; `etaf-bili-selected-row'.
 ;;
 ;; Function: etaf-bili-load-popular (session)
@@ -128,7 +133,9 @@
 ;; Perform one backend REQUEST and deliver the result to CALLBACK.
 ;; REQUEST is a plist with an `:op': `(:op :popular :page N)',
 ;; `(:op :ranking)', `(:op :search :keyword K :page N)',
-;; `(:op :video :bvid B)' or `(:op :play :bvid B)'.  CALLBACK receives
+;; `(:op :video :bvid B)', `(:op :play :bvid B)' or `(:op :cover :url U)'.
+;; The cover operation accepts Bilibili image CDN URLs and returns a local
+;; cached image path. Downloads are capped at 2 MiB. CALLBACK receives
 ;; `(:ok DATA)' or `(:error MESSAGE :hint HINT)'.  The `:play' operation
 ;; chains the metadata and stream steps and returns the stream source.
 ;;

@@ -6,7 +6,11 @@
     "../../etaf",
     "../../etaf-ui",
     "../../ebox",
-    "../../ecss"
+    "../../ecss",
+    "../etaf",
+    "../etaf-ui",
+    "../ebox",
+    "../ecss"
   ],
   "support": [],
   "cases": [
@@ -44,6 +48,41 @@
       "name": "etaf-bili-tests-parse-videos-normalizes-rows",
       "file": "tests/etaf-bili-tests.el",
       "purpose": "Response parsing cleans search markup, converts string clocks to seconds and reads both the list and result array shapes."
+    },
+    {
+      "name": "etaf-bili-gallery-tests-catalog-controls-and-scrolling",
+      "file": "tests/etaf-bili-gallery-tests.el",
+      "purpose": "Scroll continuously from the first to the last mounted card and back, then open and close details through catalog targets."
+    },
+    {
+      "name": "etaf-bili-gallery-tests-search-editing-keeps-application-keys",
+      "file": "tests/etaf-bili-gallery-tests.el",
+      "purpose": "Type application shortcut characters in the inline search field and submit without triggering application commands."
+    },
+    {
+      "name": "etaf-bili-gallery-tests-empty-error-and-stale-results",
+      "file": "tests/etaf-bili-gallery-tests.el",
+      "purpose": "Empty successful results clear the old library and stale searches cannot restore it."
+    },
+    {
+      "name": "etaf-bili-gallery-tests-latest-play-request-wins",
+      "file": "tests/etaf-bili-gallery-tests.el",
+      "purpose": "Only the newest stream resolution reaches playback when replies arrive out of order."
+    },
+    {
+      "name": "etaf-bili-gallery-tests-close-ignores-pending-response",
+      "file": "tests/etaf-bili-gallery-tests.el",
+      "purpose": "Closing a loading gallery prevents a late callback from resurrecting it."
+    },
+    {
+      "name": "etaf-bili-gallery-tests-theme-preserves-frame-and-query",
+      "file": "tests/etaf-bili-gallery-tests.el",
+      "purpose": "Theme switching preserves the library and leaves frame decoration and the user theme unchanged."
+    },
+    {
+      "name": "etaf-bili-gallery-tests-cover-cache-and-transfer-failure",
+      "file": "tests/etaf-bili-gallery-tests.el",
+      "purpose": "The public cover operation downloads through an offline curl fixture, reuses cached files and removes failed partial transfers."
     }
   ]
 }

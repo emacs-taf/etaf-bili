@@ -27,6 +27,7 @@
 (require 'cl-lib)
 (require 'json)
 (require 'subr-x)
+(require 'url-util)
 
 (define-error 'etaf-bili-error "Bilibili client error")
 
@@ -250,41 +251,43 @@ ARGUMENTS is a list of command-line strings."
           arguments))
 
 (defun etaf-bili--run (client arguments callback)
-  "Run curl with ARGUMENTS for CLIENT and deliver the body to CALLBACK.
-CALLBACK receives `(:ok BODY)' with the raw output text, or
-`(:error MESSAGE :hint HINT)' when curl fails or times out."
-  (let* ((output (generate-new-buffer " *etaf-bili-curl*"))
-         (stderr (make-temp-file "etaf-bili-stderr-"))
-         (process (make-process
-                   :name "etaf-bili-curl"
-                   :command (etaf-bili--curl-command client arguments)
-                   :buffer output
-                   :stderr stderr
-                   :noquery t
-                   :sentinel
-                   (lambda (process event)
-                     (when (memq (process-status process) '(exit signal))
-                       (let ((body (with-current-buffer output
-                                     (buffer-substring-no-properties
-                                      (point-min) (point-max))))
-                             (failure (with-temp-buffer
-                                        (insert-file-contents stderr)
-                                        (string-trim (buffer-string))))
-                             (code (process-exit-status process)))
-                         (kill-buffer output)
-                         (ignore-errors (delete-file stderr))
-                         (if (and (eq 'exit (process-status process))
-                                  (zerop code))
-                             (funcall callback (list :ok body))
-                           (funcall callback
-                                    (list :error "Bilibili request failed"
-                                          :hint (format "curl exit %s: %s"
-                                                        code
-                                                        (if (string-empty-p failure)
-                                                            (string-trim event)
-                                                          failure)))))))))))
-    (ignore process)
-    process))
+  "Run bounded curl ARGUMENTS for CLIENT, then deliver stdout to CALLBACK.
+Drain both pipes before settlement; stderr process messages are not backend
+errors.  The returned process can be cancelled by its owner."
+  (let ((output (generate-new-buffer " *bili-output*"))
+        (errors (generate-new-buffer " *bili-errors*")))
+    (condition-case problem
+        (let ((process
+               (make-process
+                :name "etaf-bili-curl" :buffer output :stderr errors
+                :coding '(utf-8-unix . utf-8-unix) :noquery t
+                :command (etaf-bili--curl-command client arguments)
+                :sentinel
+                (lambda (process _event)
+                  (when (and (memq (process-status process) '(exit signal))
+                             (buffer-live-p output))
+                    (while (accept-process-output process 0))
+                    (when-let* ((pipe (get-buffer-process errors)))
+                      (while (accept-process-output pipe 0)))
+                    (let ((body (with-current-buffer output
+                                  (buffer-substring-no-properties (point-min) (point-max))))
+                          (failure (with-current-buffer errors
+                                     (string-trim (buffer-substring-no-properties
+                                                   (point-min) (point-max)))))
+                          (code (process-exit-status process)))
+                      (kill-buffer output)
+                      (kill-buffer errors)
+                      (funcall callback
+                               (if (= code 0) (list :ok body)
+                                 (list :error "网络请求未完成，请重试"
+                                       :hint (format "curl %s: %s" code failure))))))))))
+          (when-let* ((pipe (get-buffer-process errors)))
+            (set-process-sentinel pipe #'ignore))
+          process)
+      (file-error
+       (kill-buffer output) (kill-buffer errors)
+       (funcall callback (list :error (error-message-string problem)))
+       nil))))
 
 (defun etaf-bili--json (body)
   "Parse BODY as a JSON object alist, signaling on malformed data."
@@ -374,9 +377,35 @@ the error list."
       (funcall client request callback)
     (etaf-bili--call-curl client request callback)))
 
+(defun etaf-bili--fetch-cover (client url callback)
+  "Cache a public cover URL for CLIENT and deliver its local path to CALLBACK.
+Only Bilibili's image CDN is accepted.  Downloads are limited to 2 MiB and
+atomically renamed; a failed or cancelled transfer leaves no cache entry."
+  (if (not (and (stringp url)
+                (string-match-p "\\`https?://[A-Za-z0-9.-]+\\.hdslb\\.com/" url)))
+      (progn (funcall callback '(:error "封面地址不可用")) nil)
+    (let* ((url (replace-regexp-in-string "\\`http:" "https:" url))
+           (directory (expand-file-name "covers/" (plist-get client :state-directory)))
+           (file (expand-file-name (concat (secure-hash 'sha256 url) ".img") directory)))
+      (make-directory directory t)
+      (if (file-exists-p file)
+          (progn (funcall callback (list :ok file)) nil)
+        (let ((temporary (make-temp-file (expand-file-name ".cover-" directory))))
+          (etaf-bili--run
+           client (list "--fail" "--proto" "=https" "--max-filesize" "2097152"
+                        "--output" temporary "--" url)
+           (lambda (reply)
+             (if (and (plist-member reply :ok)
+                      (> (file-attribute-size (file-attributes temporary)) 0))
+                 (progn (rename-file temporary file t)
+                        (funcall callback (list :ok file)))
+               (delete-file temporary)
+               (funcall callback (list :error "封面加载失败，仍可播放视频"))))))))))
+
 (defun etaf-bili--call-curl (client request callback)
   "Perform REQUEST through the curl CLIENT implementation."
   (pcase (plist-get request :op)
+    (:cover (etaf-bili--fetch-cover client (plist-get request :url) callback))
     (:popular
      (etaf-bili--warm
       client

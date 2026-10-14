@@ -1,104 +1,77 @@
-# etaf-bili
+# ETAF Bili
 
-A Bilibili client that runs inside one Emacs buffer, built on
-[ETAF](https://github.com/emacs-taf/etaf).  It browses the popular feed, the
-all-category ranking and video search, shows the selected video's details,
-and plays the selected video with sound through ETAF's media viewer
-Component.  Streams are resolved through the web API with the Referer and
-User-Agent headers the CDN requires; curl performs every request
-asynchronously, so the interface never blocks.
+Browse Bilibili inside Emacs: real cover cards, inline search, popular videos
+and rankings, with playback in the same buffer. Built with
+[ETAF](https://github.com/emacs-taf/etaf) and its UI catalog.
 
-The client at a wide frame:
+![Cover gallery in the dark theme](examples/etaf-bili-wide.png)
 
-![The client at a wide frame](examples/etaf-bili-wide.png)
+[Light theme](examples/etaf-bili-light.png)
 
-## Capabilities
+## What it does
 
-- The popular feed loads when the buffer opens; `1` reloads it, `2` loads the
-  all-category ranking, and `g` refreshes whatever view is current.
-- Search through the web API's signed endpoint: `/` prompts for a keyword and
-  the result list replaces the current view.  WBI signing (sorted parameters,
-  `encodeURIComponent` encoding, MD5 over the query plus the permuted server
-  key) is implemented in Lisp.
-- A details column shows the selected row's author, length, view count,
-  publication date and BV number as soon as the viewport is wide enough.
-- `RET` resolves the stream and opens it in the framework's
-  `etaf-media-viewer`: video plays in the buffer with a transport bar, sound,
-  seeking and speed control.  `n`/`p` inside the viewer move to the next or
-  previous list entry and play it.
-- Both appearances are first-class: a four-step depth palette keeps the
-  columns separated in dark and light, and `T` switches the running client.
-- Row selection is instant (`j`/`k` or `n`/`p`), clicks on a row select and
-  play it, and the list scrolls under the selection.
-- The cookie jar lives under `etaf-bili-state-directory`; the homepage visit
-  that seeds `buvid3` runs once per session and every request reuses the jar.
+- A responsive one-to-four-column cover gallery, with aspect-preserving
+  thumbnails, readable two-line titles, creator, duration and compact counts.
+- A catalog SearchField, channel Tabs and continuous wheel/trackpad scrolling. Metadata
+  opens in a Drawer instead of reserving an empty sidebar.
+- Skeleton cards during the first load, readable error/retry and empty states,
+  a scoped loading animation and a short selection transition. The shared
+  `etaf-animation-enabled` switch disables motion.
+- Dark and light application palettes without modifying the user's frame,
+  title bar or theme. Minimum usable window: **64 columns × 28 lines**;
+  smaller windows deliberately clip rather than compress the controls.
+- Asynchronous public-feed requests and at most three concurrent cover
+  downloads. Covers are cached locally; failure leaves a usable placeholder.
+- `RET` or a card's play button resolves its stream and opens the catalog
+  media viewer with the CDN headers required for playback.
 
-## Prerequisites
+This is an unofficial public-video client, not the Bilibili open platform.
+Login, account libraries, comments, danmaku and entitlement management are
+not implemented. Available quality and playback depend on the server.
 
-| Requirement | Why | Check |
-| --- | --- | --- |
-| Emacs 29.1 or newer | the ETAF runtime | `emacs --version` |
-| `etaf`, `etaf-ui`, `ebox`, `ecss` | the framework; each root entry must be on `load-path` | every checkout is readable |
-| curl | every web API request | `curl --version` |
-| ffmpeg, ffprobe, ffplay | playback (through `etaf-video`) | `ffmpeg -version` |
+## Install
 
-## Installation
+Requires Emacs 29.1+, `etaf`, `etaf-ui`, `ebox`, `ecss`, curl, and ffmpeg
+(with ffprobe and ffplay for video metadata and sound).
 
 ```elisp
-(add-to-list 'load-path "/path/to/ecss")
-(add-to-list 'load-path "/path/to/ebox")
-(add-to-list 'load-path "/path/to/etaf")
-(add-to-list 'load-path "/path/to/etaf-ui")
-(add-to-list 'load-path "/path/to/etaf-bili")
+(dolist (package '("ecss" "ebox" "etaf" "etaf-ui" "etaf-bili"))
+  (add-to-list 'load-path (expand-file-name package "/path/to/checkouts")))
 (require 'etaf-bili)
-
-(global-set-key (kbd "C-c b") #'etaf-bili-open)
+(etaf-bili-open)
 ```
 
-## Minimal example
-
-```elisp
-(etaf-bili-open)                        ; browse the popular feed
-(etaf-bili-search-prompt)               ; search for a keyword
-(etaf-bili-ranking)                     ; switch to the ranking
-(etaf-bili-session-state               ; read the session as plain data
- (etaf-bili-session-create))
-```
-
-## Keys
+## Use
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` (or `n` / `p`) | select the next / previous row |
-| `RET` | play the selected video |
-| `/` | search videos |
-| `1` / `2` | popular feed / all-category ranking |
-| `g` | refresh the current view |
-| `T` | switch dark/light appearance |
-| `?` | list every keybinding |
-| `q` | close the client |
+| `/` | Edit the in-page search field; Return submits, Escape keeps the draft |
+| Arrow keys | Move through cards in two dimensions |
+| `n` / `p` | Next / previous video (`j` / `k` also work in the default direction scheme) |
+| `RET` | Activate the focused control or play the selected video |
+| Wheel / trackpad | Scroll through the loaded results continuously |
+| `1` / `2` | Popular feed / ranking |
+| `g` | Refresh |
+| `i` | Open details |
+| `T` | Switch application theme |
+| `?` / `M-g` | Framework help / region navigation |
+| `q` | Close the current modal first, then the client |
 
-Inside the media viewer, `SPC` plays or pauses, `-10`/`+10` seek, `n`/`p`
-move to the next/previous list entry, `m` toggles sound, `.` cycles the
-speed and `q`/Escape closes the viewer and returns to the list.
+The media viewer owns playback keys while open: Space toggles playback,
+Left/Right seek, `m` toggles sound, `.` cycles speed and `n`/`p` switch videos.
 
-## Checks
+## Documentation and checks
+
+- [Manual](docs/manual.md): workflows, caching, failure recovery and integration.
+- [Architecture](docs/architecture.md): data ownership, scoped UI and lifecycle.
+- [Entry Commentary](etaf-bili.el): authoritative supported API.
 
 ```sh
-make check    # structure + byte compilation (warnings as errors) + acceptance + API boundary
-make test     # the public acceptance scenarios only
+make test     # offline public acceptance suite, including mounted catalog controls
+make check    # structure, byte compilation, acceptance and API boundaries
 ```
 
-The acceptance suite injects a fake backend through
-`etaf-bili-client-factory`, so it needs no network: the model's
-load/move/play flows run against scripted replies, and WBI signing and
-response parsing are asserted on fixed inputs.
-
-## Documentation
-
-- [The manual](docs/manual.md): browsing, searching, playback, scripting,
-  variables and troubleshooting.
-- [Architecture](docs/architecture.md): module responsibilities, data flow,
-  invariants and the ownership boundary with ETAF.
-- [The root entry Commentary](etaf-bili.el): the authoritative list of
-  supported functions and variables.
+GUI scenarios live in `scripts/etaf-bili-gui-scenarios.el`; the workspace
+performance driver loads `benchmarks/performance-scenarios.el` for the
+`bili.appearance` and `bili.scroll` workloads. Screenshots and batch tests are not latency
+certification; use the real GUI workflow in the manual.
