@@ -16,6 +16,7 @@
 (require 'etaf-ui)
 (require 'etaf-bili-model)
 (require 'etaf-bili-views)
+(declare-function image-size "image.c" (spec &optional pixels frame))
 
 (defconst etaf-bili--buffer-name "*Bili*")
 (defvar-local etaf-bili--session nil)
