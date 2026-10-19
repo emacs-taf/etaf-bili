@@ -53,8 +53,33 @@ Space plays/pauses, arrows seek, `m` toggles sound, `.` cycles speed, and `n`/`p
 resolve the adjacent video. Escape or `q` closes the viewer, not the library.
 
 The server controls availability, quality and URL expiry. This client does not
-implement login, account libraries, comments, danmaku or paid-content access.
-Reopen playback to resolve an expired stream. No permanent stream URL is saved.
+implement account libraries, comments, danmaku or paid-content access. Reopen
+playback to resolve an expired stream. No permanent stream URL is saved.
+
+## Signing in
+
+The header's account chip reads 「登录」 while nobody is signed in and shows the
+signed-in name afterwards. Activating it, or `M-x etaf-bili-login`, paints the
+site's sign-in code inside an `etaf-ui-qr-login` panel mounted with the client:
+the library stays visible, dims once and keeps its scroll position, and the
+covered controls stay blocked until the panel closes. Escape, the header `x`
+and the panel's cancel button dismiss it and stop polling.
+
+Confirm the scan in the Bilibili app; the panel then closes, the account chip
+updates and the current feed reloads with the new permissions. A code expires
+after `etaf-bili-login-timeout` seconds (180 by default) and the panel reports
+it; press the chip again for a fresh code. Polling follows
+`etaf-bili-login-poll-interval`.
+
+Only the code method is offered. Bilibili answers its SMS endpoint with a
+graphical captcha that a terminal cannot answer, so a phone-number tab could
+never complete. `M-x etaf-bili-account` reports which account the stored cookies
+belong to, and `M-x etaf-bili-logout` asks for confirmation, clears them and
+returns the chip to 「登录」.
+
+Requests go through `backends/bili/bili.mjs`, which reads and writes the same
+`cookies.txt` the HTTP client uses. `etaf-bili-backend-command` replaces that
+command prefix; the public suite injects a stand-in script through it.
 
 ## Integration
 

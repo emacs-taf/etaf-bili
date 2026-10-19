@@ -81,14 +81,19 @@
       "purpose": "The public cover operation downloads through an offline curl fixture, reuses cached files and removes failed partial transfers."
     },
     {
-      "name": "etaf-bili-tests-login-shows-a-code-and-finishes-on-confirmation",
+      "name": "etaf-bili-tests-login-overlays-the-code-and-finishes-on-confirmation",
       "file": "tests/etaf-bili-tests.el",
-      "purpose": "Signing in paints the scanned code, polls the backend and closes the code buffer once the phone confirms."
+      "purpose": "Signing in publishes the painted code in the session, closes the overlay once the phone confirms, and records the signed-in account without opening a second buffer."
     },
     {
       "name": "etaf-bili-tests-logout-calls-the-backend-after-confirmation",
       "file": "tests/etaf-bili-tests.el",
       "purpose": "Signing out asks for confirmation and only then asks the backend to clear the cookies."
+    },
+    {
+      "name": "etaf-bili-tests-login-keeps-polling-until-the-phone-confirms",
+      "file": "tests/etaf-bili-tests.el",
+      "purpose": "A scanned code is polled again until the backend confirms it, so the panel closes."
     }
   ]
 }

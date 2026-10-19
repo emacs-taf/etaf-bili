@@ -4,11 +4,17 @@
 
 ### Added
 
-- `M-x etaf-bili-login` opens a centered modal with two tabs: 扫码登录 paints
-  a scannable code here, 手机号登录 collects the number and the SMS code (the
-  site's captcha refusal is shown verbatim); `M-x etaf-bili-account` reports the
-  account and `M-x etaf-bili-logout` signs out and clears the cookie jar. The
-  account backend ships in `backends/bili/` and needs only Node.js.
+- `M-x etaf-bili-login` paints the site's sign-in code in an
+  `etaf-ui-qr-login` panel over the running client, which keeps its content and
+  only dims; the header's account chip opens it and shows the signed-in name.
+  `M-x etaf-bili-account` reports the account and `M-x etaf-bili-logout` signs
+  out and clears the cookie jar. The account backend ships in
+  `backends/bili/` and needs only Node.js.
+
+### Removed
+
+- The phone-number sign-in tab. Bilibili answers its SMS endpoint with a
+  graphical captcha, so the method could never complete from a terminal.
 
 ### Changed
 

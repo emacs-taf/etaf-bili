@@ -139,8 +139,10 @@ reads dimensions once, outside rendering.  Insets absorb partial image rows."
       (etaf-skeleton :width (list 'ch (/ columns 2))))))
 
 (etaf-define-component etaf-bili--header
-    (&key query on-submit on-theme width compact)
-  "A three-row header, with breathing room and a native editable SearchField."
+    (&key query account on-account on-submit on-theme width compact)
+  "A three-row header with the SearchField and the account chip.
+ACCOUNT is the signed-in name or nil; the chip shows it, or asks for a sign-in
+when nobody is signed in, and ON-ACCOUNT opens the sign-in panel."
   :view
   (flex :width (list 'ch width) :height '(lh 3) :align-items 'center
         :gap '((lh 0) (ch 3)) :region '(:id search :label "搜索视频" :key "s" :enter bili-search)
@@ -150,6 +152,12 @@ reads dimensions once, outside rendering.  Insets absorb partial image rows."
     (etaf-search-field :ref 'bili-search :bind query :icon t
                        :placeholder "搜索视频、UP 主或关键词"
                        :on-submit on-submit)
+    (etaf-button :ref 'bili-account
+                 :label (if account (format "账号 %s" account)
+                          (if compact "登录" "未登录 · 扫码登录"))
+                 :variant (if account 'ghost 'secondary)
+                 :aria-label (if account (format "已登录 %s" account) "登录哔哩哔哩")
+                 :on-press on-account)
     (etaf-button :ref 'bili-theme :label (if compact "明暗" "切换主题")
                  :variant 'ghost :on-press on-theme)))
 

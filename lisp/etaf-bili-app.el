@@ -16,6 +16,7 @@
 (require 'etaf-ui)
 (require 'etaf-bili-model)
 (require 'etaf-bili-views)
+(require 'etaf-bili-account)
 (declare-function image-size "image.c" (spec &optional pixels frame))
 
 (defconst etaf-bili--buffer-name "*Bili*")
@@ -138,7 +139,7 @@ remains the sole offset authority."
        (etaf-button :label "?" :variant 'ghost :on-press #'etaf-help)))))
 
 (etaf-define-component etaf-bili--shell (&key session)
-  "Compose the search header, navigation, cover gallery and modal surfaces."
+  "Compose the search header, navigation, cover gallery and floating surfaces."
   :bindings
   ((theme (etaf-bili--session-theme-ref session))
    (details (etaf-bili--session-details-ref session))
@@ -154,13 +155,17 @@ remains the sole offset authority."
                     ('ranking (etaf-bili-load-ranking session))
                     (_ (if (etaf-bili--session-keyword session)
                            (etaf-bili-search session (etaf-bili--session-keyword session))
-                         (etaf-bili-search-prompt)))))))
+                         (etaf-bili-search-prompt))))))
+   (open-sign-in (lambda () (etaf-bili-login session)))
+   (close-sign-in (lambda () (etaf-bili--login-cancel session))))
   :setup (etaf-theme-provide theme)
   :render
   (let* ((_theme (etaf-value theme))
          (layout (etaf-value (etaf-bili--session-layout-ref session)))
          (row (etaf-value details))
          (playing (etaf-value (etaf-bili--session-playback-ref session)))
+         (account (etaf-value (etaf-bili--session-account-ref session)))
+         (login (etaf-value (etaf-bili--session-login-ref session)))
          (width (plist-get layout :columns))
          (height (plist-get layout :rows)))
     (etaf-view
@@ -174,6 +179,7 @@ remains the sole offset authority."
                :background-color (etaf-bili-color :bg)
          (etaf-bili--header :query (etaf-bili--session-query-ref session)
                             :width width :compact (< width 96)
+                            :account account :on-account open-sign-in
                             :on-submit submit :on-theme #'etaf-bili-toggle-theme))
        (box :width 'stretch :height '(lh 1) :background-color (etaf-bili-color :bg))
        (column :width 'stretch :height '(lh 3) :cross-align 'center
@@ -200,7 +206,11 @@ remains the sole offset authority."
                           :src (plist-get playing :source) :title (or (plist-get playing :title) "")
                           :on-close (lambda () (etaf-bili--stop-playback session))
                           :on-next (lambda () (etaf-bili--play-relative session 1))
-                          :on-previous (lambda () (etaf-bili--play-relative session -1)))))))
+                          :on-previous (lambda () (etaf-bili--play-relative session -1)))
+       (etaf-ui-qr-login :open (and (plist-get login :open) t)
+                         :code (plist-get login :qr)
+                         :status (plist-get login :status)
+                         :on-close close-sign-in)))))
 
 (defun etaf-bili--select (session index)
   "Select INDEX without unnecessarily publishing an identical state."
@@ -394,6 +404,7 @@ remains the sole offset authority."
                  (face-remap-set-base 'default (list :background (etaf-bili-color :bg)
                                                      :foreground (etaf-bili-color :ink))))
                (add-hook 'window-size-change-functions #'etaf-bili--resize)
+               (etaf-bili--account-query session t)
                (etaf-bili-load-popular session))
       (error (kill-buffer buffer) (signal (car error) (cdr error))))
     buffer))

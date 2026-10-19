@@ -58,12 +58,14 @@ account backend bundled in `backends/bili/`.
 | `?` / `M-g` | Framework help / region navigation |
 | `q` | Close the current modal first, then the client |
 
-Sign-in runs inside Emacs: `M-x etaf-bili-login` opens a centered modal with
-the site's two methods -- 扫码登录 paints the code and waits for the phone,
-手机号登录 collects the number and the SMS code. Bilibili gates the SMS endpoint
-with a graphical captcha, so a refusal shows the site's message and points at
-the QR tab. `M-x etaf-bili-account` reports who is signed in and
-`M-x etaf-bili-logout` signs out and clears those cookies.
+Sign-in happens over the running client: the header's account chip reads
+「登录」 until somebody signs in and then shows that account's name. Pressing it
+(or `M-x etaf-bili-login`) paints the site's code in a centered panel while the
+library stays visible underneath, dimmed; a phone confirms the scan, the panel
+closes and the gallery reloads. Only the code method exists, because Bilibili
+gates its SMS endpoint behind a graphical captcha. `M-x etaf-bili-account`
+reports who is signed in and `M-x etaf-bili-logout` signs out and clears those
+cookies.
 
 The media viewer owns playback keys while open: Space toggles playback,
 Left/Right seek, `m` toggles sound, `.` cycles speed and `n`/`p` switch videos.

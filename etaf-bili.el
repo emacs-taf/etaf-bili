@@ -34,18 +34,27 @@
 ;; consumers.  This Commentary is the authoritative export list;
 ;; implementations and precise docstrings remain beside their definitions.
 ;;
-;; Function: etaf-bili-login ()
-;; Show a Bilibili sign-in QR code in Emacs and wait for the phone to confirm
-;; it; the bundled backend (backends/bili, Node.js only) updates the cookie jar
-;; every request uses, then the open sessions reload.
+;; Function: etaf-bili-login (&optional session)
+;; Show the sign-in code as an `etaf-ui-qr-login' panel over the running
+;; client: the library keeps its content and only dims.  SESSION defaults to
+;; the current buffer's; without one the client opens first.  A phone
+;; confirms the scan, then the panel closes, the header's account chip shows
+;; the name and the library reloads.  The bundled backend (backends/bili,
+;; Node.js only) updates the cookie jar every request uses.  The phone-number
+;; method is absent because the site gates its SMS endpoint behind a graphical
+;; captcha.
 ;;
-;; Function: etaf-bili-logout ()
+;; Function: etaf-bili-account-cancel (session)
+;; Close SESSION's sign-in panel and stop polling for its code; the dismissal
+;; the panel's cancel button performs.
+;;
+;; Function: etaf-bili-logout (&optional session)
 ;; Ask for confirmation, sign out through the backend and drop the stored
-;; Bilibili cookies.
+;; Bilibili cookies; the account chip returns to the signed-out label.
 ;;
-;; Function: etaf-bili-account ()
+;; Function: etaf-bili-account (&optional session)
 ;; Report the account the stored cookies belong to, or that nobody is signed
-;; in.
+;; in, and publish it to SESSION.
 ;;
 ;; Variable: etaf-bili-node-program
 ;; Node.js executable that runs the bundled account backend, "node" by
@@ -59,9 +68,7 @@
 ;; Command prefix overriding the bundled backend, nil by default; the public
 ;; suite injects a stand-in script through it.
 ;;
-;; Variable: etaf-bili-login-buffer-name
-;; Buffer showing the sign-in code while the phone confirmation is pending.
-;;
+
 ;; Variable: etaf-bili-login-poll-interval
 ;; Seconds between two sign-in polls, 2 by default.
 ;;

@@ -109,7 +109,14 @@
                      (cdr (assoc "Referer" (plist-get received :headers)))))
       (should (equal '(:op :play :bvid "BV1")
                      (car etaf-bili-tests--requests)))
-      (should (equal "播放：视频" (plist-get (etaf-bili-session-state session) :status))))))
+      (should (equal "播放：视频" (plist-get (etaf-bili-session-state session) :status)))
+      ;; The resolved stream is kept: pressing the same card again must not
+      ;; ask the site a second time.
+      (let ((before (length etaf-bili-tests--requests))
+            (again nil))
+        (etaf-bili-play-selected session (lambda (source) (setq again source)))
+        (should (equal "https://cdn.example/clip.mp4" (plist-get again :url)))
+        (should (= before (length etaf-bili-tests--requests)))))))
 
 (ert-deftest etaf-bili-tests-play-failure-only-changes-status ()
   "A failed stream lookup reports on the status line and plays nothing."
@@ -175,6 +182,11 @@
                     (file-name-directory (or load-file-name buffer-file-name)))
   "Stand-in for the bundled account backend in the account scenarios.")
 
+(defconst etaf-bili-tests--account-scan-backend
+  (expand-file-name "fixtures/fake-account-backend-scan.sh"
+                    (file-name-directory (or load-file-name buffer-file-name)))
+  "Stand-in backend that only confirms after the code was scanned.")
+
 (defun etaf-bili-tests--account-wait (predicate &optional seconds)
   "Wait until PREDICATE is non-nil for at most SECONDS."
   (let ((deadline (+ (float-time) (or seconds 5))))
@@ -183,22 +195,59 @@
       (sleep-for 0.01))
     (funcall predicate)))
 
-(ert-deftest etaf-bili-tests-login-shows-a-code-and-finishes-on-confirmation ()
-  "Signing in paints the code, polls, then closes the code buffer.
-The stand-in backend answers the start and poll commands the real one uses."
+(defun etaf-bili-tests--login-state (session)
+  "Return the sign-in state the client publishes for SESSION."
+  (plist-get (etaf-bili-session-state session) :login))
+
+(ert-deftest etaf-bili-tests-login-overlays-the-code-and-finishes-on-confirmation ()
+  "Signing in overlays the code on the client and closes when confirmed.
+The stand-in backend answers the start and poll commands the real one uses;
+the session's sign-in state carries the painted code and the signed-in name."
   (let ((etaf-bili-backend-command (list etaf-bili-tests--account-backend))
         (etaf-bili-login-poll-interval 0.05))
+    (let ((session (etaf-bili-session-create)))
+      (unwind-protect
+          (progn
+            (etaf-bili-login session)
+            (should (plist-get (etaf-bili-tests--login-state session) :open))
+            (should (etaf-bili-tests--account-wait
+                     (lambda ()
+                       (string-match-p "█"
+                                       (or (plist-get (etaf-bili-tests--login-state session) :qr)
+                                           "")))))
+            (should (etaf-bili-tests--account-wait
+                     (lambda ()
+                       (not (plist-get (etaf-bili-tests--login-state session) :open)))))
+            (should (equal "测试用户"
+                           (plist-get (etaf-bili-session-state session) :account))))
+        (etaf-bili-account-cancel session)))))
+
+(ert-deftest etaf-bili-tests-login-keeps-polling-until-the-phone-confirms ()
+  "A scanned code keeps being polled until the backend confirms it.
+The stand-in advances waiting, scanned, then confirmed, so a client that
+looks once and stops leaves the panel open with the code still showing."
+  (let* ((counter (make-temp-file "bili-scan"))
+         (etaf-bili-backend-command (list etaf-bili-tests--account-scan-backend))
+         (etaf-bili-login-poll-interval 0.05)
+         (process-environment (cons (format "BILI_FAKE_COUNTER=%s" counter)
+                                    process-environment)))
     (unwind-protect
-        (progn
-          (etaf-bili-login)
-          (should (etaf-bili-tests--account-wait
-                   (lambda () (get-buffer etaf-bili-login-buffer-name))))
-          (with-current-buffer etaf-bili-login-buffer-name
-            (should (string-match-p "扫码登录" (buffer-string))))
-          (should (etaf-bili-tests--account-wait
-                   (lambda () (not (get-buffer etaf-bili-login-buffer-name))))))
-      (when (get-buffer etaf-bili-login-buffer-name)
-        (kill-buffer etaf-bili-login-buffer-name)))))
+        (let ((session (etaf-bili-session-create)))
+          (unwind-protect
+              (progn
+                (etaf-bili-login session)
+                (should (etaf-bili-tests--account-wait
+                         (lambda ()
+                           (not (plist-get (etaf-bili-tests--login-state session) :open)))))
+                (should (>= (string-to-number
+                             (with-temp-buffer
+                               (insert-file-contents counter)
+                               (buffer-string)))
+                            3))
+                (should (equal "扫码用户"
+                               (plist-get (etaf-bili-session-state session) :account))))
+            (etaf-bili-account-cancel session)))
+      (delete-file counter))))
 
 (ert-deftest etaf-bili-tests-logout-calls-the-backend-after-confirmation ()
   "Signing out asks first, then lets the backend clear the cookies."

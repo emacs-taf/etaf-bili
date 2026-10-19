@@ -354,6 +354,59 @@ endpoints keep working without keys."
             (plist-put client :warmed t))
           (funcall then)))))))
 
+(defun etaf-bili--stream-url (client bvid cid callback)
+  "Ask for BVID's playable stream at CID and call CALLBACK with the result.
+CALLBACK receives (URL AUDIO STREAMS REPLY).  The reply's DASH manifest is
+preferred: a Bilibili stream is usually a video track and a separate audio
+track, so the player needs both URLs and must remember every other track for
+an instant quality switch.  An older MP4 reply (DASH absent) still works
+through its `durl' entry.  URL is nil when nothing is playable, and REPLY
+carries the failure as reported by the site."
+  (etaf-bili--api-call
+   client "/x/player/playurl"
+   (list (cons "bvid" bvid)
+         (cons "cid" (number-to-string cid))
+         (cons "qn" "80")
+         (cons "fnval" "16")
+         (cons "fourk" "1"))
+   (lambda (reply)
+     (let* ((play (plist-get reply :ok))
+            (dash (etaf-bili--get play 'dash))
+            (videos (etaf-bili--rows (etaf-bili--get dash 'video)))
+            (audios (etaf-bili--rows (etaf-bili--get dash 'audio)))
+            (durl (etaf-bili--rows (etaf-bili--get play 'durl)))
+            (video (car videos))
+            (audio (car (sort (copy-sequence audios)
+                              (lambda (a b)
+                                (> (or (etaf-bili--get a 'bandwidth) 0)
+                                   (or (etaf-bili--get b 'bandwidth) 0)))))))
+       (cond
+        ((and video (etaf-bili--get video 'baseUrl))
+         (funcall callback
+                  (etaf-bili--get video 'baseUrl)
+                  (etaf-bili--get audio 'baseUrl)
+                  (mapcar (lambda (entry)
+                            (list :id (etaf-bili--get entry 'id)
+                                  :label (etaf-bili--quality-label
+                                          (etaf-bili--get entry 'id))
+                                  :url (etaf-bili--get entry 'baseUrl)
+                                  :codec (etaf-bili--get entry 'codecs)))
+                          videos)
+                  reply))
+        ((and durl (etaf-bili--get (car durl) 'url))
+         (funcall callback (etaf-bili--get (car durl) 'url) nil nil reply))
+        (t (funcall callback nil nil nil reply)))))))
+
+(defun etaf-bili--quality-label (id)
+  "Return the site's quality name for numeric stream ID.
+Codes follow Bilibili's playurl documentation; an unknown ID keeps its
+number so the menu still names what it offers."
+  (or (cdr (assq id '((16 . "360P") (32 . "480P") (64 . "720P")
+                      (74 . "720P60") (80 . "1080P") (112 . "1080P+")
+                      (116 . "1080P60") (120 . "4K") (125 . "HDR")
+                      (126 . "杜比视界") (127 . "8K"))))
+      (format "%s" id)))
+
 (defun etaf-bili-client-call (client request callback)
   "Perform one REQUEST through CLIENT and deliver the result to CALLBACK.
 CLIENT is either the plist `etaf-bili-make-client' returns or a function
@@ -467,35 +520,31 @@ atomically renamed; a failed or cancelled transfer leaves no cache entry."
                                                    (etaf-bili--get data 'duration)))))
              (funcall callback reply)))))))
     (:play
-     (etaf-bili-client-call
-      client (list :op :video :bvid (plist-get request :bvid))
-      (lambda (info)
-        (if-let* ((data (plist-get info :ok))
-                  (cid (plist-get data :cid)))
-            (etaf-bili--warm
-             client
-             (lambda ()
-               (etaf-bili--api-call
-                client "/x/player/playurl"
-                (list (cons "bvid" (plist-get data :bvid))
-                      (cons "cid" (number-to-string cid))
-                      (cons "qn" "80")
-                      (cons "fnval" "1"))
-                (lambda (reply)
-                  (if-let* ((play (plist-get reply :ok))
-                            (durl (etaf-bili--rows (etaf-bili--get play 'durl)))
-                            (url (etaf-bili--get (car durl) 'url)))
+     (etaf-bili--warm
+      client
+      (lambda ()
+        (etaf-bili-client-call
+         client (list :op :video :bvid (plist-get request :bvid))
+         (lambda (info)
+           (if-let* ((data (plist-get info :ok))
+                     (cid (plist-get data :cid)))
+               (etaf-bili--stream-url
+                client (plist-get data :bvid) cid
+                (lambda (url audio streams reply)
+                  (if url
                       (funcall callback
-                               (list :ok (list :url url
-                                               :bvid (plist-get data :bvid)
-                                               :title (plist-get data :title)
-                                               :duration (plist-get data :duration)
-                                               :headers (list (cons "Referer" etaf-bili--referer)
-                                                              (cons "User-Agent" etaf-bili--user-agent)))))
+                               (list :ok (append
+                                          (list :url url
+                                                :bvid (plist-get data :bvid)
+                                                :title (plist-get data :title)
+                                                :duration (plist-get data :duration)
+                                                :headers (list (cons "Referer" etaf-bili--referer)
+                                                               (cons "User-Agent" etaf-bili--user-agent)))
+                                          (when audio (list :audio-url audio))
+                                          (when streams (list :streams streams)))))
                     (funcall callback
-                             (or reply
-                                 (list :error "No stream URL in the reply"))))))))
-          (funcall callback (or info (list :error "Video metadata missing")))))))
+                             (or reply (list :error "No stream URL in the reply"))))))
+             (funcall callback (or info (list :error "Video metadata missing")))))))))
     (_
      (funcall callback (list :error (format "Unknown operation: %S" (plist-get request :op)))))))
 

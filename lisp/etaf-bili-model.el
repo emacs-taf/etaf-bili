@@ -19,6 +19,10 @@
   mode-ref status-ref items-ref selected-ref loading-ref playback-ref
   theme-ref layout-ref query-ref error-ref play-loading-ref
   details-ref visible-row-ref disposed (play-request 0) on-change
+  account-ref login-ref
+  ;; The row whose stream was already resolved, and its source, so a second
+  ;; press on the same card plays without asking the site again.
+  play-bvid play-source
   (covers (make-hash-table :test #'equal)) cover-queue (cover-active 0)
   processes)
 
@@ -36,7 +40,11 @@ Nil factory selects the default curl client.  Creation sends no requests."
    :theme-ref (etaf-ref (etaf-bili-theme-defaults))
    :layout-ref (etaf-ref nil :test #'equal) :query-ref (etaf-ref "")
    :error-ref (etaf-ref nil) :play-loading-ref (etaf-ref nil) :details-ref (etaf-ref nil)
-   :visible-row-ref (etaf-ref 0)))
+   :visible-row-ref (etaf-ref 0)
+   ;; The account name the backend reported, nil while signed out, and the
+   ;; sign-in overlay: :open, :qr and :status.
+   :account-ref (etaf-ref nil) :login-ref (etaf-ref nil)
+   :play-bvid nil :play-source nil))
 
 (defun etaf-bili--status (session text)
   "Set SESSION's displayed status to TEXT."
@@ -113,7 +121,9 @@ Nil factory selects the default curl client.  Creation sends no requests."
 (defun etaf-bili-session-state (session)
   "Return a detached snapshot of SESSION.
 Keys are :mode, :keyword, :status, :loading, :items, :selected, :playback,
-:error and :play-loading.  Empty successful results have nil :error."
+:error, :play-loading, :account and :login.  :account is the signed-in name
+or nil, and :login is the sign-in overlay state (:open :qr :status).  Empty
+successful results have nil :error."
   (copy-tree
    (list :mode (etaf-bili--session-mode session)
          :keyword (etaf-bili--session-keyword session)
@@ -123,7 +133,9 @@ Keys are :mode, :keyword, :status, :loading, :items, :selected, :playback,
          :selected (etaf-bili--session-selected session)
          :playback (etaf-bili--session-playback session)
          :error (etaf-value (etaf-bili--session-error-ref session))
-         :play-loading (etaf-value (etaf-bili--session-play-loading-ref session)))))
+         :play-loading (etaf-value (etaf-bili--session-play-loading-ref session))
+         :account (etaf-value (etaf-bili--session-account-ref session))
+         :login (etaf-value (etaf-bili--session-login-ref session)))))
 
 (defun etaf-bili-reload (session)
   "Reload SESSION's current feed or search."
@@ -147,28 +159,40 @@ Keys are :mode, :keyword, :status, :loading, :items, :selected, :playback,
 
 (defun etaf-bili-play-selected (session on-ready)
   "Resolve SESSION's selected stream and call ON-READY with its source.
-Only the latest play request may complete.  Failure keeps the library and
-reports :error; a closed session cannot reopen playback."
+A card whose stream was already resolved plays immediately: the site's
+play URL expires in hours, not seconds, so asking again would only add
+latency to every press.  Any other card asks once and then remembers the
+source.  Only the latest play request may complete; failure keeps the
+library and reports :error, and a closed session cannot reopen playback."
   (when-let* ((row (etaf-bili-selected-row session)))
-    (let ((token (cl-incf (etaf-bili--session-play-request session))))
-      (etaf-batch
-        (etaf-set-value (etaf-bili--session-play-loading-ref session) t)
-        (etaf-set-value (etaf-bili--session-error-ref session) nil)
-        (etaf-bili--status session "正在获取播放地址…"))
-      (etaf-bili-client-call
-       (etaf-bili--session-client session) (list :op :play :bvid (plist-get row :bvid))
-       (lambda (reply)
-         (when (and (not (etaf-bili--session-disposed session))
-                    (= token (etaf-bili--session-play-request session)))
-           (etaf-batch
-             (etaf-set-value (etaf-bili--session-play-loading-ref session) nil)
-             (if-let* ((source (plist-get reply :ok)))
-                 (progn
-                   (etaf-bili--status session (format "播放：%s" (or (plist-get source :title)
-                                                                     (plist-get row :title))))
-                   (funcall on-ready source))
-               (let ((error (or (plist-get reply :error) "未知错误")))
-                 (etaf-set-value (etaf-bili--session-error-ref session) error)
-                 (etaf-bili--status session (concat "播放失败：" error)))))))))))
+    (let ((bvid (plist-get row :bvid)))
+      (if (and (equal bvid (etaf-bili--session-play-bvid session))
+               (plist-get (etaf-bili--session-play-source session) :url))
+          (let ((source (etaf-bili--session-play-source session)))
+            (etaf-bili--status session (format "播放：%s" (or (plist-get source :title)
+                                                              (plist-get row :title))))
+            (funcall on-ready source))
+        (let ((token (cl-incf (etaf-bili--session-play-request session))))
+          (etaf-batch
+            (etaf-set-value (etaf-bili--session-play-loading-ref session) t)
+            (etaf-set-value (etaf-bili--session-error-ref session) nil)
+            (etaf-bili--status session "正在获取播放地址…"))
+          (etaf-bili-client-call
+           (etaf-bili--session-client session) (list :op :play :bvid bvid)
+           (lambda (reply)
+             (when (and (not (etaf-bili--session-disposed session))
+                        (= token (etaf-bili--session-play-request session)))
+               (etaf-batch
+                 (etaf-set-value (etaf-bili--session-play-loading-ref session) nil)
+                 (if-let* ((source (plist-get reply :ok)))
+                     (progn
+                       (setf (etaf-bili--session-play-bvid session) bvid
+                             (etaf-bili--session-play-source session) source)
+                       (etaf-bili--status session (format "播放：%s" (or (plist-get source :title)
+                                                                         (plist-get row :title))))
+                       (funcall on-ready source))
+                   (let ((error (or (plist-get reply :error) "未知错误")))
+                     (etaf-set-value (etaf-bili--session-error-ref session) error)
+                     (etaf-bili--status session (concat "播放失败：" error)))))))))))))
 
 (provide 'etaf-bili-model)
