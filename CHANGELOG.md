@@ -4,10 +4,11 @@
 
 ### Added
 
-- `M-x etaf-bili-login` signs in by scanning a QR code drawn in Emacs;
-  `M-x etaf-bili-account` reports the account and `M-x etaf-bili-logout` signs
-  out and clears the cookie jar. The account backend ships in
-  `backends/bili/` and needs only Node.js.
+- `M-x etaf-bili-login` opens a centered modal with two tabs: 扫码登录 paints
+  a scannable code here, 手机号登录 collects the number and the SMS code (the
+  site's captcha refusal is shown verbatim); `M-x etaf-bili-account` reports the
+  account and `M-x etaf-bili-logout` signs out and clears the cookie jar. The
+  account backend ships in `backends/bili/` and needs only Node.js.
 
 ### Changed
 
