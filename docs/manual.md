@@ -102,8 +102,8 @@ captures separately from the assertions. Playback and pointer feedback need
 their real-data pass too; batch acceptance does not certify those properties.
 
 The workspace performance driver accepts
-`--scenario-file etaf-apps/etaf-bili/benchmarks/performance-scenarios.el
---scenario bili.appearance --load-path etaf-apps/etaf-bili` with `--mode batch`
+`--scenario-file etaf-bili/benchmarks/performance-scenarios.el
+--scenario bili.appearance --load-path etaf-bili` with `--mode batch`
 or `--mode gui --server NAME`. Use `--scenario bili.scroll` for continuous
 scrolling across virtual rows in a hundred-video offline library. Keep sources
 quiet during measurement and use
