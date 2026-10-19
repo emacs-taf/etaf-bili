@@ -290,7 +290,7 @@ square in the terminal's 1:2 cell."
 
 (defun etaf-bili--login-edit-phone ()
   "Read the phone number for the SMS sign-in."
-  (interactive)
+
   (when-let* ((value (etaf-call-with-input
                       (lambda () (read-string "手机号（含区号）："
                                               (or (plist-get etaf-bili-login--state :phone) "+86 "))))))
@@ -299,14 +299,14 @@ square in the terminal's 1:2 cell."
 
 (defun etaf-bili--login-edit-code ()
   "Read the SMS code for the phone sign-in."
-  (interactive)
+
   (when-let* ((value (etaf-call-with-input (lambda () (read-string "短信验证码：")))))
     (etaf-bili--login-state :code (string-trim value))
     (etaf-bili--login-render)))
 
 (defun etaf-bili--login-send-sms ()
   "Ask the backend to send the SMS code to the recorded phone number."
-  (interactive)
+
   (let ((phone (plist-get etaf-bili-login--state :phone)))
     (if (string-empty-p phone)
         (message "先填写手机号")
@@ -325,7 +325,7 @@ square in the terminal's 1:2 cell."
 
 (defun etaf-bili--login-submit ()
   "Submit the phone number and SMS code to the backend."
-  (interactive)
+
   (let ((phone (plist-get etaf-bili-login--state :phone))
         (code (plist-get etaf-bili-login--state :code)))
     (if (or (string-empty-p phone) (string-empty-p code))
@@ -355,7 +355,7 @@ square in the terminal's 1:2 cell."
 
 (defun etaf-bili--login-cancel ()
   "Stop waiting for the sign-in and close the modal."
-  (interactive)
+
   (etaf-bili--login-close)
   (message "已取消登录"))
 
