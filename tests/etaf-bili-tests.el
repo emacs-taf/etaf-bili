@@ -167,3 +167,51 @@
 
 (provide 'etaf-bili-tests)
 ;;; etaf-bili-tests.el ends here
+
+;;; Account commands
+
+(defconst etaf-bili-tests--account-backend
+  (expand-file-name "fixtures/fake-account-backend.sh"
+                    (file-name-directory (or load-file-name buffer-file-name)))
+  "Stand-in for the bundled account backend in the account scenarios.")
+
+(defun etaf-bili-tests--account-wait (predicate &optional seconds)
+  "Wait until PREDICATE is non-nil for at most SECONDS."
+  (let ((deadline (+ (float-time) (or seconds 5))))
+    (while (and (< (float-time) deadline) (not (funcall predicate)))
+      (accept-process-output nil 0.02)
+      (sleep-for 0.01))
+    (funcall predicate)))
+
+(ert-deftest etaf-bili-tests-login-shows-a-code-and-finishes-on-confirmation ()
+  "Signing in paints the code, polls, then closes the code buffer.
+The stand-in backend answers the start and poll commands the real one uses."
+  (let ((etaf-bili-backend-command (list etaf-bili-tests--account-backend))
+        (etaf-bili-login-poll-interval 0.05))
+    (unwind-protect
+        (progn
+          (etaf-bili-login)
+          (should (etaf-bili-tests--account-wait
+                   (lambda () (get-buffer etaf-bili-login-buffer-name))))
+          (with-current-buffer etaf-bili-login-buffer-name
+            (should (string-match-p "扫码登录" (buffer-string))))
+          (should (etaf-bili-tests--account-wait
+                   (lambda () (not (get-buffer etaf-bili-login-buffer-name))))))
+      (when (get-buffer etaf-bili-login-buffer-name)
+        (kill-buffer etaf-bili-login-buffer-name)))))
+
+(ert-deftest etaf-bili-tests-logout-calls-the-backend-after-confirmation ()
+  "Signing out asks first, then lets the backend clear the cookies."
+  (let* ((log (make-temp-file "etaf-bili-account-"))
+         (etaf-bili-backend-command (list etaf-bili-tests--account-backend))
+         (process-environment (cons (format "BILI_FAKE_LOG=%s" log) process-environment)))
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+            (etaf-bili-logout))
+          (should (etaf-bili-tests--account-wait
+                   (lambda ()
+                     (with-temp-buffer
+                       (insert-file-contents log)
+                       (string-match-p "logout" (buffer-string)))))))
+      (delete-file log))))

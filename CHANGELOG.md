@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- `M-x etaf-bili-login` signs in by scanning a QR code drawn in Emacs;
+  `M-x etaf-bili-account` reports the account and `M-x etaf-bili-logout` signs
+  out and clears the cookie jar. The account backend ships in
+  `backends/bili/` and needs only Node.js.
+
 ### Changed
 
 - Replace the full-width text list and permanent details sidebar with a

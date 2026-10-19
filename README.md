@@ -31,8 +31,9 @@ not implemented. Available quality and playback depend on the server.
 
 ## Install
 
-Requires Emacs 29.1+, `etaf`, `etaf-ui`, `ebox`, `ecss`, curl, and ffmpeg
-(with ffprobe and ffplay for video metadata and sound).
+Requires Emacs 29.1+, `etaf`, `etaf-ui`, `ebox`, `ecss`, curl, ffmpeg
+(with ffprobe and ffplay for video metadata and sound) and Node.js for the
+account backend bundled in `backends/bili/`.
 
 ```elisp
 (dolist (package '("ecss" "ebox" "etaf" "etaf-ui" "etaf-bili"))
@@ -56,6 +57,11 @@ Requires Emacs 29.1+, `etaf`, `etaf-ui`, `ebox`, `ecss`, curl, and ffmpeg
 | `T` | Switch application theme |
 | `?` / `M-g` | Framework help / region navigation |
 | `q` | Close the current modal first, then the client |
+
+Sign-in runs inside Emacs: `M-x etaf-bili-login` shows a Bilibili QR code in
+its own buffer, waits for the phone to confirm it and stores the cookies the
+client already uses. `M-x etaf-bili-account` reports who is signed in and
+`M-x etaf-bili-logout` signs out and clears those cookies.
 
 The media viewer owns playback keys while open: Space toggles playback,
 Left/Right seek, `m` toggles sound, `.` cycles speed and `n`/`p` switch videos.

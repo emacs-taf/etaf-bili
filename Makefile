@@ -11,6 +11,7 @@ LOAD_PATH = -L . -L lisp -L tests -L $(PROVIDER_ROOT)/etaf -L $(PROVIDER_ROOT)/e
             -L $(PROVIDER_ROOT)/ebox -L $(PROVIDER_ROOT)/ecss
 
 SOURCES = lisp/etaf-bili-theme.el lisp/etaf-bili-service.el lisp/etaf-bili-model.el \
+          lisp/etaf-bili-account.el \
           lisp/etaf-bili-views.el lisp/etaf-bili-app.el
 SOURCES += etaf-bili.el
 

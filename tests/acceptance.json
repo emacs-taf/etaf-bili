@@ -79,6 +79,16 @@
       "name": "etaf-bili-gallery-tests-cover-cache-and-transfer-failure",
       "file": "tests/etaf-bili-gallery-tests.el",
       "purpose": "The public cover operation downloads through an offline curl fixture, reuses cached files and removes failed partial transfers."
+    },
+    {
+      "name": "etaf-bili-tests-login-shows-a-code-and-finishes-on-confirmation",
+      "file": "tests/etaf-bili-tests.el",
+      "purpose": "Signing in paints the scanned code, polls the backend and closes the code buffer once the phone confirms."
+    },
+    {
+      "name": "etaf-bili-tests-logout-calls-the-backend-after-confirmation",
+      "file": "tests/etaf-bili-tests.el",
+      "purpose": "Signing out asks for confirmation and only then asks the backend to clear the cookies."
     }
   ]
 }

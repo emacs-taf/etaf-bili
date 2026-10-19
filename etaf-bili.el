@@ -34,6 +34,40 @@
 ;; consumers.  This Commentary is the authoritative export list;
 ;; implementations and precise docstrings remain beside their definitions.
 ;;
+;; Function: etaf-bili-login ()
+;; Show a Bilibili sign-in QR code in Emacs and wait for the phone to confirm
+;; it; the bundled backend (backends/bili, Node.js only) updates the cookie jar
+;; every request uses, then the open sessions reload.
+;;
+;; Function: etaf-bili-logout ()
+;; Ask for confirmation, sign out through the backend and drop the stored
+;; Bilibili cookies.
+;;
+;; Function: etaf-bili-account ()
+;; Report the account the stored cookies belong to, or that nobody is signed
+;; in.
+;;
+;; Variable: etaf-bili-node-program
+;; Node.js executable that runs the bundled account backend, "node" by
+;; default.
+;;
+;; Variable: etaf-bili-backend-directory
+;; Directory of the bundled account backend (backends/bili in this
+;; repository).
+;;
+;; Variable: etaf-bili-backend-command
+;; Command prefix overriding the bundled backend, nil by default; the public
+;; suite injects a stand-in script through it.
+;;
+;; Variable: etaf-bili-login-buffer-name
+;; Buffer showing the sign-in code while the phone confirmation is pending.
+;;
+;; Variable: etaf-bili-login-poll-interval
+;; Seconds between two sign-in polls, 2 by default.
+;;
+;; Variable: etaf-bili-login-timeout
+;; Seconds the QR sign-in waits for confirmation, 180 by default.
+;;
 ;; Function: etaf-bili-open ()
 ;;;###autoload (autoload 'etaf-bili-open "etaf-bili" nil t)
 ;; Open the client in its own buffer and return that buffer.
@@ -171,6 +205,7 @@
                                       (bound-and-true-p byte-compile-current-file)
                                       buffer-file-name)))))
 
+(require 'etaf-bili-account)
 (require 'etaf-bili-app)
 
 (provide 'etaf-bili)
