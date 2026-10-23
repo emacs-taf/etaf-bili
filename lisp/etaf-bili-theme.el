@@ -44,6 +44,14 @@ footer and transport, `:panel3' a control track.")
   :type '(choice (const :tag "Dark" dark) (const :tag "Light" light))
   :group 'etaf-bili)
 
+(defconst etaf-bili--theme-modes '((dark . "暗") (light . "亮"))
+  "Appearances a client and the panel that frames it switch between.")
+
+(defvar etaf-bili--theme-mode-ref (etaf-ref etaf-bili-theme-mode)
+  "Appearance cell shared by the mounted client and the panel that frames it.
+`etaf-bili-toggle-theme' and a panel's title-bar switch write it, so the card
+grid and the surface around it repaint from one state.")
+
 (defun etaf-bili-color (key &optional mode)
   "Return the palette color named KEY.
 MODE defaults to `etaf-bili-theme-mode'.  An unknown KEY signals an error

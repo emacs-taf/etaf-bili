@@ -84,6 +84,26 @@
 ;;;###autoload (autoload 'etaf-bili-close "etaf-bili" nil t)
 ;; Tear down the runtime and kill the client buffer.
 ;;
+;; Function: etaf-bili-create ()
+;;;###autoload (autoload 'etaf-bili-create "etaf-bili" nil t)
+;; Create a client session to mount through `etaf-bili-view'.
+;; A session is headless until a View is mounted and creation sends no
+;; request, so a caller can build it before a window exists.  Every host gets
+;; its own session, so a desktop window and a panel do not share selection or
+;; playback.
+;;
+;; Function: etaf-bili-view (session)
+;;;###autoload (autoload 'etaf-bili-view "etaf-bili" nil t)
+;; Return SESSION's View for mounting in a host of your own.
+;; The View lays out for the region it is given and follows that region's
+;; resizes, so a desktop window or a floating panel reflows the card grid.
+;; Mounting adopts the host buffer: the client's keys, the inline search and
+;; the session-level commands find SESSION there.  The first mount loads the
+;; popular feed; a session that already has a library only refits, so a panel
+;; reopened with `:keep-alive' resumes where it was.  Unmounting stops the
+;; session's transfers and polling but keeps its library, selection and
+;; account for the next mount.
+;;
 ;; Function: etaf-bili-next ()
 ;; Select and focus the next video; clamp at the last item.
 ;;

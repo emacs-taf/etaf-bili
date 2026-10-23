@@ -94,6 +94,11 @@
       "name": "etaf-bili-tests-login-keeps-polling-until-the-phone-confirms",
       "file": "tests/etaf-bili-tests.el",
       "purpose": "A scanned code is polled again until the backend confirms it, so the panel closes."
+    },
+    {
+      "name": "etaf-bili-tests-view-mounts-in-a-host-buffer",
+      "file": "tests/etaf-bili-tests.el",
+      "purpose": "A host mounts the View in its own buffer, the client's keys reach the adopted session, and mounting the same session again keeps the loaded library instead of fetching it again."
     }
   ]
 }

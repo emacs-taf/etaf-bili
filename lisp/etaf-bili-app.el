@@ -109,6 +109,10 @@ remains the sole offset authority."
           (etaf-node
            'grid
            (list :width 'stretch :height (list 'lh (plist-get slice :height))
+                 ;; The grid paints the gap between cards itself: a palette
+                 ;; change then repaints those cells with the rest of the card
+                 ;; plane instead of leaving the previous surface behind.
+                 :background-color (etaf-bili-color :bg)
                  :grid-template-columns columns
                  :grid-template-rows (make-list (plist-get slice :rows) (list 'lh height))
                  :gap '((lh 1) (ch 3)))
@@ -158,10 +162,41 @@ remains the sole offset authority."
                          (etaf-bili-search-prompt))))))
    (open-sign-in (lambda () (etaf-bili-login session)))
    (close-sign-in (lambda () (etaf-bili--login-cancel session))))
-  :setup (etaf-theme-provide theme)
+  :setup
+  (progn
+    ;; A caller may set the defcustom after this library loaded, so the shared
+    ;; appearance cell takes that value before anything paints from it.
+    (unless (eq (etaf-value etaf-bili--theme-mode-ref) etaf-bili-theme-mode)
+      (etaf-set-value etaf-bili--theme-mode-ref etaf-bili-theme-mode))
+    (etaf-theme-provide theme)
+    ;; A panel or a desktop window frames the client with its own surface, so
+    ;; the border, title bar and its switch paint from the same palette as the
+    ;; gallery; standing alone the View provides the theme itself.
+    (when-let* ((surface (etaf-surface-host)))
+      (etaf-surface-declare surface :theme theme
+                            :mode etaf-bili--theme-mode-ref
+                            :modes etaf-bili--theme-modes))
+    ;; One appearance state: `T' and a panel's title-bar switch write the same
+    ;; cell, and the session's Theme follows it.
+    (etaf-watch etaf-bili--theme-mode-ref
+                (lambda (mode _old)
+                  (setq etaf-bili-theme-mode mode)
+                  (etaf-set-value (etaf-bili--session-theme-ref session)
+                                  (etaf-bili-theme-defaults mode)))
+                :name 'etaf-bili-theme)
+    ;; The View lays out for the region it is mounted into: its own buffer
+    ;; window when it stands alone, or the host window that embeds it.
+    (etaf-watch #'etaf-viewport
+                (lambda (_viewport _old)
+                  (etaf-bili--sync-viewport session)
+                  nil)
+                :immediate t)
+    (etaf-on-mounted (lambda () (etaf-bili--mounted session)))
+    (etaf-on-unmounted (lambda () (etaf-bili--unmounted session))))
   :render
   (let* ((_theme (etaf-value theme))
-         (layout (etaf-value (etaf-bili--session-layout-ref session)))
+         (layout (or (etaf-value (etaf-bili--session-layout-ref session))
+                     (etaf-bili--layout nil)))
          (row (etaf-value details))
          (playing (etaf-value (etaf-bili--session-playback-ref session)))
          (account (etaf-value (etaf-bili--session-account-ref session)))
@@ -229,8 +264,8 @@ remains the sole offset authority."
 (defun etaf-bili--observe-scroll (session offset)
   "Project OFFSET from the native scroll owner into SESSION's visible rows."
   (unless (etaf-bili--session-disposed session)
-    (let* ((layout (etaf-value (etaf-bili--session-layout-ref session)))
-           (first (/ offset (1+ (plist-get layout :card-height)))))
+    (when-let* ((layout (etaf-value (etaf-bili--session-layout-ref session)))
+                (first (/ offset (1+ (plist-get layout :card-height)))))
       (unless (= first (etaf-value (etaf-bili--session-visible-row-ref session)))
         (etaf-set-value (etaf-bili--session-visible-row-ref session) first)
         (etaf-bili--prepare-covers session)))))
@@ -254,9 +289,9 @@ remains the sole offset authority."
      (unless (or (etaf-bili--session-disposed session)
                  (null (etaf-bili--session-items session)))
        (when-let* ((buffer (etaf-bili--session-buffer session))
-                   (runtime (etaf-runtime-for-buffer buffer)))
-         (let* ((layout (etaf-value (etaf-bili--session-layout-ref session)))
-                (row (/ (etaf-bili--session-selected session) (plist-get layout :across)))
+                   (runtime (etaf-runtime-for-buffer buffer))
+                   (layout (etaf-value (etaf-bili--session-layout-ref session))))
+         (let* ((row (/ (etaf-bili--session-selected session) (plist-get layout :across)))
                 (top (* row (1+ (plist-get layout :card-height))))
                 (bottom (+ top (plist-get layout :card-height)))
                 (offset (etaf-scroll-offset runtime 'bili-gallery))
@@ -276,7 +311,8 @@ remains the sole offset authority."
   (unless (etaf-bili--session-disposed session)
     (let* ((table (etaf-bili--session-covers session))
            (items (etaf-bili--session-items session))
-           (layout (etaf-value (etaf-bili--session-layout-ref session)))
+           (layout (or (etaf-value (etaf-bili--session-layout-ref session))
+                       (etaf-bili--layout nil)))
            (slice (etaf-bili--visible-slice
                    (etaf-value (etaf-bili--session-visible-row-ref session))
                    (length items) layout)))
@@ -320,31 +356,61 @@ remains the sole offset authority."
                   (etaf-bili--pump-covers session))))))
         (when (processp process) (push process (etaf-bili--session-processes session)))))))
 
-(defun etaf-bili--sync-layout (session)
-  "Read the displayed viewport once and update SESSION's pure layout value."
+(defun etaf-bili--sync-viewport (session)
+  "Lay SESSION out for the region that shows it.
+The frame of the session's buffer supplies the character metrics and the
+Runtime supplies the committed display-safe viewport, so the same View fits
+the client's own window, a panel's child frame or a desktop window."
   (when-let* ((buffer (etaf-bili--session-buffer session))
-              (window (get-buffer-window buffer t)))
-    (let* ((frame (window-frame window))
-           (runtime (etaf-runtime-for-buffer buffer))
-           (viewport (and runtime (etaf-runtime-mounted-p runtime)
-                          (or (etaf-runtime-window-viewport runtime)
-                              (etaf-runtime-viewport runtime))))
-           ;; A whole-row display-space wider than the canvas is dropped by
-           ;; redisplay.  Use the provider's usable width, never raw window
-           ;; width or a guessed pixel allowance.  Initial mount is narrow;
-           ;; the first committed viewport immediately supplies the real size.
-           (layout (etaf-bili--layout
-                    (list (or (car viewport) (* 64 (frame-char-width frame)))
-                          (or (cdr viewport) (window-body-height window))
-                          (frame-char-width frame) (frame-char-height frame)))))
-      (etaf-set-value (etaf-bili--session-layout-ref session) layout)
-      (etaf-bili--prepare-covers session))))
+              (window (get-buffer-window buffer t))
+              (frame (window-frame window))
+              (runtime (etaf-runtime-for-buffer buffer))
+              (viewport (and runtime (etaf-runtime-mounted-p runtime)
+                             (or (etaf-runtime-window-viewport runtime)
+                                 (etaf-runtime-viewport runtime)))))
+    (etaf-set-value
+     (etaf-bili--session-layout-ref session)
+     (etaf-bili--layout (list (car viewport) (cdr viewport)
+                              (frame-char-width frame) (frame-char-height frame))))
+    (etaf-bili--prepare-covers session)))
 
-(defun etaf-bili--resize (_frame)
-  "Refit the visible Bili buffer without affecting other application windows."
-  (when-let* ((buffer (get-buffer etaf-bili--buffer-name)))
-    (with-current-buffer buffer
-      (when etaf-bili--session (etaf-bili--sync-layout etaf-bili--session)))))
+(defun etaf-bili--mounted (session)
+  "Adopt the buffer that mounted SESSION's View and start the client there.
+A host mounts this View itself, so the buffer and the change callback are
+recorded here.  A session that already has a library only refits, which is
+what a panel reopened with `:keep-alive' needs."
+  (when-let* ((runtime (etaf-current-runtime))
+              (buffer (and runtime (etaf-runtime-buffer runtime))))
+    (when (buffer-live-p buffer)
+      (setf (etaf-bili--session-disposed session) nil
+            (etaf-bili--session-buffer session) buffer
+            (etaf-bili--session-on-change session)
+            (lambda (reset) (etaf-bili--library-changed session reset)))
+      (with-current-buffer buffer
+        (setq-local etaf-bili--session session)
+        (add-hook 'kill-buffer-hook (lambda () (etaf-bili--unmounted session)) nil t))
+      (etaf-bili--sync-viewport session)
+      ;; A request abandoned by the previous mount left its flag set; this
+      ;; mount owns no live request yet, so the gallery starts from rest.
+      (when (etaf-bili--session-loading session)
+        (setf (etaf-bili--session-loading session) nil)
+        (etaf-set-value (etaf-bili--session-loading-ref session) nil))
+      (etaf-bili--account-query session t)
+      (unless (etaf-bili--session-items session)
+        (etaf-bili-load-popular session)))))
+
+(defun etaf-bili--unmounted (session)
+  "Release SESSION's host-buffer resources; a later mount revives it.
+The library, selection and account stay, so a hidden or closed host opens a
+revived session where it was instead of fetching again."
+  (setf (etaf-bili--session-disposed session) t
+        (etaf-bili--session-on-change session) nil
+        (etaf-bili--session-loading session) nil)
+  (cl-incf (etaf-bili--session-request session))
+  (etaf-bili--login-stop)
+  (dolist (process (etaf-bili--session-processes session))
+    (when (process-live-p process) (delete-process process)))
+  (setf (etaf-bili--session-processes session) nil))
 
 (defun etaf-bili--start-playback (session source)
   "Publish SOURCE into SESSION's media viewer if the buffer remains live."
@@ -368,13 +434,27 @@ remains the sole offset authority."
   "Release the current buffer's requests, runtime and scoped animations."
   (when etaf-bili--session
     (let ((session etaf-bili--session))
-      (setf (etaf-bili--session-disposed session) t
-            (etaf-bili--session-on-change session) nil)
       (setq etaf-bili--session nil)
-      (dolist (process (etaf-bili--session-processes session))
-        (when (process-live-p process) (delete-process process)))
-      (when-let* ((runtime (etaf-runtime-for-buffer (current-buffer)))) (etaf-unmount runtime))
-      (remove-hook 'window-size-change-functions #'etaf-bili--resize))))
+      (etaf-bili--unmounted session)
+      (when-let* ((runtime (etaf-runtime-for-buffer (current-buffer))))
+        (etaf-unmount runtime)))))
+
+;;;###autoload
+(defun etaf-bili-create ()
+  "Create a client session to mount through `etaf-bili-view'.
+The session is headless until a View is mounted, and creation sends no
+request.  Every host gets its own session, so a desktop window and a panel do
+not share selection or playback."
+  (etaf-bili-session-create))
+
+;;;###autoload
+(defun etaf-bili-view (session)
+  "Return SESSION's View for mounting in a host of your own.
+The View lays out for the region it is given and follows that region's
+resizes, so a desktop window or a floating panel reflows the card grid.  It
+adopts the buffer it is mounted into, which keeps the client's keys, commands
+and inline search working there, and the first mount loads the popular feed."
+  (etaf-view (etaf-bili--shell :session session)))
 
 ;;;###autoload
 (defun etaf-bili-open ()
@@ -383,7 +463,7 @@ remains the sole offset authority."
   (when-let* ((old (get-buffer etaf-bili--buffer-name)))
     (with-current-buffer old (etaf-bili-close)))
   (let* ((buffer (get-buffer-create etaf-bili--buffer-name))
-         (session (etaf-bili-session-create)))
+         (session (etaf-bili-create)))
     (with-current-buffer buffer
       (setq-local etaf-bili--session session mode-line-format nil
                   truncate-lines t auto-hscroll-mode nil cursor-type nil)
@@ -391,21 +471,14 @@ remains the sole offset authority."
       (set-display-table-slot buffer-display-table 'truncation ?\s)
       (face-remap-set-base 'default (list :background (etaf-bili-color :bg)
                                           :foreground (etaf-bili-color :ink)))
-      (setf (etaf-bili--session-buffer session) buffer
-            (etaf-bili--session-on-change session)
-            (lambda (reset) (etaf-bili--library-changed session reset)))
       (add-hook 'kill-buffer-hook #'etaf-bili--cleanup nil t))
     (switch-to-buffer buffer)
-    (etaf-bili--sync-layout session)
     (condition-case error
-        (progn (etaf-mount buffer (etaf-view (etaf-bili--shell :session session)))
-               (etaf-bili--sync-layout session)
-               (with-current-buffer buffer
-                 (face-remap-set-base 'default (list :background (etaf-bili-color :bg)
-                                                     :foreground (etaf-bili-color :ink))))
-               (add-hook 'window-size-change-functions #'etaf-bili--resize)
-               (etaf-bili--account-query session t)
-               (etaf-bili-load-popular session))
+        (progn
+          (etaf-mount buffer (etaf-bili-view session))
+          (with-current-buffer buffer
+            (face-remap-set-base 'default (list :background (etaf-bili-color :bg)
+                                                :foreground (etaf-bili-color :ink)))))
       (error (kill-buffer buffer) (signal (car error) (cdr error))))
     buffer))
 
@@ -458,9 +531,15 @@ remains the sole offset authority."
   "Switch the client palette without changing the frame or user theme."
   (interactive)
   (let ((session (etaf-bili--current)))
-    (setq etaf-bili-theme-mode (if (eq etaf-bili-theme-mode 'dark) 'light 'dark))
-    (face-remap-set-base 'default (list :background (etaf-bili-color :bg)
-                                       :foreground (etaf-bili-color :ink)))
+    (etaf-set-value etaf-bili--theme-mode-ref
+                    (if (eq (etaf-value etaf-bili--theme-mode-ref) 'dark)
+                        'light 'dark))
+    (setq etaf-bili-theme-mode (etaf-value etaf-bili--theme-mode-ref))
+    ;; The client's own buffer adopts the palette through its default face; a
+    ;; panel or desktop window paints the surface it declared instead.
+    (when (equal (buffer-name) etaf-bili--buffer-name)
+      (face-remap-set-base 'default (list :background (etaf-bili-color :bg)
+                                          :foreground (etaf-bili-color :ink))))
     (etaf-set-value (etaf-bili--session-theme-ref session) (etaf-bili-theme-defaults))))
 
 (provide 'etaf-bili-app)

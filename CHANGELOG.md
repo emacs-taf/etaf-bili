@@ -4,6 +4,11 @@
 
 ### Added
 
+- `M-x etaf-bili-create` and `etaf-bili-view` expose the client as an
+  embeddable View: a desktop window or a floating panel mounts it, lays the card
+  grid out for its own region, follows a settled resize and keeps the client's
+  keys. The first mount loads the popular feed; unmounting keeps the library,
+  selection and account for the next mount and makes pending replies inert.
 - `M-x etaf-bili-login` paints the site's sign-in code in an
   `etaf-ui-qr-login` panel over the running client, which keeps its content and
   only dims; the header's account chip opens it and shows the signed-in name.

@@ -58,6 +58,27 @@ account backend bundled in `backends/bili/`.
 | `?` / `M-g` | Framework help / region navigation |
 | `q` | Close the current modal first, then the client |
 
+## Embed in a panel or desktop
+
+`M-x etaf-bili-open` is one host. A caller that already owns a window mounts
+the same View instead:
+
+```elisp
+(require 'etaf-bili)
+(let ((buffer (get-buffer-create "*Bili*")))
+  (etaf-mount buffer (etaf-bili-view (etaf-bili-create)))
+  buffer)
+```
+
+The View lays out for the region it is mounted into and follows that region's
+resizes, so a floating panel or a desktop window reflows the card grid instead
+of clipping it. Mounting adopts the host buffer, which keeps the client's keys,
+the inline search and the session-level commands working there. The first
+mount loads the popular feed; unmounting stops transfers and polling but keeps
+the library, selection and account, so a panel reopened with `:keep-alive`
+resumes where it was. `etaf-posframe-register-app` opens it with
+`:create #'etaf-bili-create` and `:view #'etaf-bili-view`.
+
 Sign-in happens over the running client: the header's account chip reads
 「登录」 until somebody signs in and then shows that account's name. Pressing it
 (or `M-x etaf-bili-login`) paints the site's code in a centered panel while the

@@ -264,3 +264,35 @@ looks once and stops leaves the panel open with the code still showing."
                        (insert-file-contents log)
                        (string-match-p "logout" (buffer-string)))))))
       (delete-file log))))
+
+(ert-deftest etaf-bili-tests-view-mounts-in-a-host-buffer ()
+  "A host mounts the View, keeps the client's keys and reuses its session.
+The session is adopted by the buffer that mounts it and the popular feed loads
+on the first mount, so mounting the same session again shows what was loaded
+instead of fetching it again."
+  (let ((etaf-bili-tests--requests nil)
+        (etaf-bili-tests--script
+         '((:popular :ok ((:bvid "BV1" :title "宿主里的第一条"))))))
+    (let* ((session (etaf-bili-tests--session))
+           (buffer (generate-new-buffer " *etaf-bili host*")))
+      (unwind-protect
+          (progn
+            (switch-to-buffer buffer)
+            (etaf-mount buffer (etaf-bili-view session))
+            (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+              (should (string-match-p "宿主里的第一条" text)))
+            (should (equal "热门 · 1 条"
+                           (plist-get (etaf-bili-session-state session) :status)))
+            ;; The client's own key reaches the session the host mounted.
+            (execute-kbd-macro (kbd "g"))
+            (should (equal 2 (length etaf-bili-tests--requests)))
+            ;; Unmounting keeps the library, so mounting the same session again
+            ;; shows what was loaded instead of fetching it again.
+            (etaf-unmount (etaf-runtime-for-buffer buffer))
+            (etaf-mount buffer (etaf-bili-view session))
+            (should (equal 2 (length etaf-bili-tests--requests)))
+            (should (string-match-p "宿主里的第一条"
+                                    (buffer-substring-no-properties (point-min) (point-max)))))
+        (when-let* ((runtime (etaf-runtime-for-buffer buffer)))
+          (etaf-unmount runtime))
+        (kill-buffer buffer)))))

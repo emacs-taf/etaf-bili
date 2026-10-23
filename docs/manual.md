@@ -133,3 +133,30 @@ or `--mode gui --server NAME`. Use `--scenario bili.scroll` for continuous
 scrolling across virtual rows in a hundred-video offline library. Keep sources
 quiet during measurement and use
 three independent sets for a final latency claim.
+
+## Hosting the client
+
+`etaf-bili-create` returns a headless session and `etaf-bili-view` returns its
+View, so a host that already owns a buffer mounts the client instead of calling
+`etaf-bili-open`. Creation sends no request; the first mount loads the popular
+feed.
+
+The View lays out for the region it is mounted into, not for the whole frame:
+columns, card size and the visible row window come from the mounted Runtime's
+committed viewport, and a settled resize re-lays the grid out at the new width.
+A host narrower than the 64 by 28 minimum keeps that minimum layout and clips
+deliberately.
+
+Mounting adopts the host buffer. The client records the buffer and its change
+callback there, so the declared keys, the inline search, `M-x etaf-bili-next`
+and the other session commands find the mounted session; a desktop window and a
+panel each keep their own session, selection and playback. The palette is
+declared on the host's surface when the host provides one, so the panel border
+and title bar paint from the same theme as the gallery; the client buffer of
+`etaf-bili-open` keeps remapping its own default face instead.
+
+Unmounting stops cover transfers, backend requests and sign-in polling but keeps
+the library, selection and account, and pending replies are made inert. Mounting
+the same session again therefore resumes where it was and does not fetch the
+feed a second time, which is what a `:keep-alive` panel needs. `etaf-bili-close`
+remains the way to end the standalone client.
