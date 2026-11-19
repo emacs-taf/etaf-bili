@@ -18,6 +18,7 @@
 (require 'etaf-bili-views)
 (require 'etaf-bili-account)
 (declare-function image-size "image.c" (spec &optional pixels frame))
+(declare-function etaf-canvas-cell "etaf-viewport" (&optional runtime))
 
 (defconst etaf-bili--buffer-name "*Bili*")
 (defvar-local etaf-bili--session nil)
@@ -324,19 +325,24 @@ remains the sole offset authority."
   "Read the displayed viewport once and update SESSION's pure layout value."
   (when-let* ((buffer (etaf-bili--session-buffer session))
               (window (get-buffer-window buffer t)))
-    (let* ((frame (window-frame window))
-           (runtime (etaf-runtime-for-buffer buffer))
+    (let* ((runtime (etaf-runtime-for-buffer buffer))
            (viewport (and runtime (etaf-runtime-mounted-p runtime)
                           (or (etaf-runtime-window-viewport runtime)
                               (etaf-runtime-viewport runtime))))
+           ;; The grid states its widths in `ch', which the canvas resolves
+           ;; with its own cell; measuring that cell with the frame's face
+           ;; would fit fewer columns than the canvas has and leave the deck
+           ;; short on both sides.  The framework answers from the canvas and
+           ;; falls back to the frame's face before the first mount.
+           (cell (etaf-canvas-cell runtime))
            ;; A whole-row display-space wider than the canvas is dropped by
            ;; redisplay.  Use the provider's usable width, never raw window
            ;; width or a guessed pixel allowance.  Initial mount is narrow;
            ;; the first committed viewport immediately supplies the real size.
            (layout (etaf-bili--layout
-                    (list (or (car viewport) (* 64 (frame-char-width frame)))
+                    (list (or (car viewport) (* 64 (car cell)))
                           (or (cdr viewport) (window-body-height window))
-                          (frame-char-width frame) (frame-char-height frame)))))
+                          (car cell) (cdr cell)))))
       (etaf-set-value (etaf-bili--session-layout-ref session) layout)
       (etaf-bili--prepare-covers session))))
 
