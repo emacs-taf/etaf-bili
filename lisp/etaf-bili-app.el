@@ -18,6 +18,7 @@
 (require 'etaf-bili-views)
 (require 'etaf-bili-account)
 (declare-function image-size "image.c" (spec &optional pixels frame))
+(declare-function etaf-canvas-cell "etaf-viewport" (&optional runtime))
 
 (defconst etaf-bili--buffer-name "*Bili*")
 (defvar-local etaf-bili--session nil)
@@ -358,20 +359,23 @@ remains the sole offset authority."
 
 (defun etaf-bili--sync-viewport (session)
   "Lay SESSION out for the region that shows it.
-The frame of the session's buffer supplies the character metrics and the
+The canvas supplies the cell the grid's `ch' and `lh' resolve with, and the
 Runtime supplies the committed display-safe viewport, so the same View fits
 the client's own window, a panel's child frame or a desktop window."
   (when-let* ((buffer (etaf-bili--session-buffer session))
-              (window (get-buffer-window buffer t))
-              (frame (window-frame window))
               (runtime (etaf-runtime-for-buffer buffer))
               (viewport (and runtime (etaf-runtime-mounted-p runtime)
                              (or (etaf-runtime-window-viewport runtime)
-                                 (etaf-runtime-viewport runtime)))))
+                                 (etaf-runtime-viewport runtime))))
+              ;; The grid states its widths in `ch', which the canvas resolves
+              ;; with its own cell; measuring that cell with the frame's face
+              ;; would fit fewer columns than the canvas has and leave the deck
+              ;; short on both sides.
+              (cell (etaf-canvas-cell runtime)))
     (etaf-set-value
      (etaf-bili--session-layout-ref session)
      (etaf-bili--layout (list (car viewport) (cdr viewport)
-                              (frame-char-width frame) (frame-char-height frame))))
+                              (car cell) (cdr cell))))
     (etaf-bili--prepare-covers session)))
 
 (defun etaf-bili--mounted (session)

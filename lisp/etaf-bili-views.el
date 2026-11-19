@@ -38,20 +38,27 @@ minimum layout instead of shrinking type or overlapping controls."
   (let* ((cw (or (nth 2 viewport) 7)) (lh (or (nth 3 viewport) 16))
          (pixels (max (* 64 cw) (or (nth 0 viewport) (* 100 cw))))
          (lines (max 28 (or (nth 1 viewport) 36)))
-         (budget (min 180 (- (floor pixels cw) 6)))
-         (across (min 4 (max 1 (/ (+ budget 3) 42))))
+         (budget (- (floor pixels cw) 4))
          (body (- lines 11))
          (target-rows (if (>= body 29) 2 1))
          (row-budget (1- (floor (1+ body) target-rows)))
-         (card-width (min (floor (- budget (* 3 (1- across))) across)
-                          (+ 4 (floor (/ (* (max 5 (- row-budget 6)) lh 16.0) (* cw 9))))))
+         ;; A cover keeps its 16:9 shape, so the visible rows bound how wide a
+         ;; card is worth drawing.  The fit then adds a column while one more
+         ;; still clears a readable card, instead of stopping at a fixed count
+         ;; and leaving the deck short on both sides.
+         (comfort (max 30 (+ 4 (floor (/ (* (max 5 (- row-budget 6)) lh 16.0)
+                                         (* cw 9))))))
+         (fit (etaf-fit-columns budget (min 42 comfort) 30))
+         (across (plist-get fit :across))
+         (card-width (plist-get fit :item))
          (columns (+ (* across card-width) (* 3 (1- across))))
          (cover-columns (- card-width 4))
          (cover-rows (max 5 (ceiling (/ (* cover-columns cw 9.0) (* lh 16)))))
          (card-height (+ cover-rows 6))
          (down (max 1 (floor (1+ body) (1+ card-height)))))
     (list :width pixels :rows lines :columns budget :grid-columns columns :across across
-          :left (max 0 (/ (- pixels (* budget cw)) 2))
+          :left (max 0 (+ (/ (- pixels (* budget cw)) 2)
+                          (* (plist-get fit :offset) cw)))
           :card-width card-width :cover-columns cover-columns
           :cover-rows cover-rows :card-height card-height
           :capacity (* across down) :body body :cell-width cw :cell-height lh)))
